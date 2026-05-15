@@ -1,0 +1,17 @@
+
+---
+spring:
+  datasource:
+    driver-class-name: org.sqlite.JDBC
+    url: jdbc:sqlite:file::memory:?cache=shared
+    hikari:
+      max-lifetime: 0
+      maximum-pool-size: 1
+  config:
+    activate:
+      on-profile: default
+  sql:
+    init:
+      mode: always
+      platform: sqlite
+cds.fiori.direct_crud: true
