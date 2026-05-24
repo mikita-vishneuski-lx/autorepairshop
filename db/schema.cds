@@ -97,4 +97,14 @@ type StockType : String enum {
     Analog;
 }
 
+entity MasterLogs : cuid, managed {
+    appointment    : Association to Appointments;
+    appointmentNo  : String(20);
+    workDescription : String(255);
+    duration       : String(50);
+    price          : Decimal(15, 2);
+    currency       : Currency;
+    createdFromPos : Integer;
+}
+
 

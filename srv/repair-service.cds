@@ -19,6 +19,8 @@ service RepairService {
 
         50 as partsPercentage : Integer
 
+    } actions {
+        action applyStandardMaintenance() returns Appointments;
     };
 
     entity Stocks as projection on db.Stocks
@@ -27,5 +29,7 @@ service RepairService {
     };
 
     entity ServicesOffered as projection on db.OfferedServices;
+
+    entity MasterLogs as projection on db.MasterLogs;
 
 }
