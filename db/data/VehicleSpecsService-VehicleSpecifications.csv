@@ -1,0 +1,5 @@
+vin;manufacturer;model;engineCode;enginePowerKw;fuelType;transmission;driveType;bodyType;productionYear
+WBA00000000000001;BMW;320i;B48B20;135;Petrol;Automatic;RWD;Sedan;2018
+WAU00000000000002;Audi;A4 40 TFSI;EA888;140;Petrol;Automatic;FWD;Sedan;2020
+WDC00000000000003;Mercedes-Benz;C200;M264;135;Petrol;Automatic;RWD;Sedan;2019
+WVW00000000000004;Volkswagen;Passat 2.0 TSI;EA888;162;Petrol;Automatic;FWD;Sedan;2021

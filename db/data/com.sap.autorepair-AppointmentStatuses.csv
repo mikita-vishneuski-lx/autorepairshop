@@ -1,0 +1,7 @@
+code;name;descr
+New;New;Newly created appointment
+Pending;Pending;Waiting for client approval
+In Inspection;In Inspection;Vehicle is being inspected
+Approved;Approved;Approved by the client
+In Progress;In Progress;Work in progress
+Closed;Closed;Appointment completed

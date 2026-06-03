@@ -32,7 +32,7 @@ public class StockHandler implements EventHandler {
 
     @On(entity = Stocks_.CDS_NAME)
     public void onGetAvailableSustitutes(StocksGetAvailableSubstitutesContext context) {
-        
+
         CqnSelect selectOriginalPart = context.getCqn();
 
         Stocks selectedPart = db.run(selectOriginalPart).first(Stocks.class).orElse(null);
@@ -43,14 +43,14 @@ public class StockHandler implements EventHandler {
         }
 
         CqnSelect findSubstitutesQuery;
-        
+
         if (TYPE_ORIGINAL.equals(selectedPart.getType())) {
             findSubstitutesQuery = Select.from(Stocks_.class)
                                         .where(s -> s.type().eq(TYPE_ANALOG)
                                             .and(s.original_ID().eq(selectedPart.getId()))
                                             .and(s.quantity().gt(BigDecimal.ZERO)));
         }
-        
+
         else if (TYPE_ANALOG.equals(selectedPart.getType()) && selectedPart.getOriginalId() != null) {
              String baseOriginalId = selectedPart.getOriginalId();
 
@@ -73,4 +73,3 @@ public class StockHandler implements EventHandler {
         context.setResult(availableSubstitutes);
     }
 }
- 

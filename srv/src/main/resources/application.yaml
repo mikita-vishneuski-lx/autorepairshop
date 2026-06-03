@@ -14,4 +14,39 @@ spring:
     init:
       mode: always
       platform: sqlite
-cds.fiori.direct_crud: true
+
+cds:
+  fiori:
+    direct_crud: true
+  security:
+    mock:
+      users:
+        - name: client1
+          password: client1
+          roles: [Client]
+        - name: client2
+          password: client2
+          roles: [Client]
+        - name: bob
+          password: bob
+          roles: [Mechanic]
+        - name: alice
+          password: alice
+          roles: [Manager]
+
+---
+spring:
+  config.activate.on-profile: mocked
+cds:
+  application:
+    services:
+      VehicleSpecsService-mocked:
+        model: VehicleSpecsService
+        serve:
+          path: VehicleSpecsService
+  remote:
+    services:
+      VehicleSpecsService:
+        type: odata-v4
+        destination:
+          name: vehicle-specs-destination-mocked

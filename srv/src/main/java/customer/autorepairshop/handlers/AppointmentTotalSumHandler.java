@@ -37,7 +37,7 @@ public class AppointmentTotalSumHandler implements EventHandler{
         this.db = db;
     }
 
-    @After(event = {CqnService.EVENT_CREATE, CqnService.EVENT_UPDATE}, 
+    @After(event = {CqnService.EVENT_CREATE, CqnService.EVENT_UPDATE},
         entity = AppointmentsItems_.CDS_NAME)
     public void afterAppointmentsItemChange(List<AppointmentsItems> items) {
 
@@ -57,7 +57,6 @@ public class AppointmentTotalSumHandler implements EventHandler{
                 .forEach(this::calculateAppointmentTotalSum);
     }
 
-    
     @Before(event = CqnService.EVENT_DELETE, entity = AppointmentsItems_.CDS_NAME)
     public void beforeAppointmentsItemDelete(EventContext context, CqnDelete delete) {
         var selectRows = Select.from(delete.ref());
@@ -72,8 +71,9 @@ public class AppointmentTotalSumHandler implements EventHandler{
 
     @After(event = CqnService.EVENT_DELETE, entity = AppointmentsItems_.CDS_NAME)
     public void afterAppointmentsItemDelete(EventContext context) {
+        @SuppressWarnings("unchecked")
         var deletedItems = (List<AppointmentsItems>) context.get(DELETED_ITEMS);
-        
+
         if (deletedItems != null && !deletedItems.isEmpty()){
             deletedItems.stream()
                         .map(AppointmentsItems::getParentId)
@@ -88,7 +88,7 @@ public class AppointmentTotalSumHandler implements EventHandler{
                  .where(i -> i.parent_ID().eq(appointmentId));
 
         var appointmentItems = db.run(selectItems).listOf(AppointmentsItems.class);
-        
+
         BigDecimal totalSum = appointmentItems.stream()
                                 .filter(item -> item.getPrice() != null && item.getQuantity() != null)
                                 .map(item -> item.getPrice().multiply(item.getQuantity()))

@@ -1,6 +1,6 @@
-ID;articleNo;name;brand;type;quantity;price;original_ID
-11111111-1111-1111-1111-111111111112;ART-001;Brake Pad;Bosch;Original;10.00;45.00;
-22222222-2222-2222-2222-222222222222;ART-002;Brake Pad;Generic;Analog;50.00;20.00;11111111-1111-1111-1111-111111111112
-33333333-3333-3333-3333-333333333333;ART-003;Brake Pad;CheapPart;Analog;0.00;15.00;11111111-1111-1111-1111-111111111112
-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa;STD-OIL-001;Engine Oil;Shell;Original;100.00;25.00;
-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb;STD-FILTER-001;Oil Filter;Bosch;Original;80.00;15.00;
+ID;articleNo;name;brand;type;quantity;price;currency_code;original_ID
+8f4d1b20-6a5e-4d7c-9b34-12f0a0011001;ART-001;Brake Pad Kit;Bosch;Original;10.00;45.00;USD;
+1c92e8b7-3d44-4f6b-8a11-12f0a0011002;ART-002;Brake Pad Kit;TRW;Analog;50.00;20.00;USD;8f4d1b20-6a5e-4d7c-9b34-12f0a0011001
+2e18c0d1-7b55-4e92-9c88-12f0a0011003;ART-003;Brake Pad Kit;BudgetLine;Analog;0.00;15.00;USD;8f4d1b20-6a5e-4d7c-9b34-12f0a0011001
+3f7b2c91-1d64-46bb-8f04-12f0a0011004;STD-OIL-001;Premium 5W-30 Synthetic Engine Oil;Shell;Original;100.00;25.00;USD;
+4a8d6e10-2f73-4e9b-9a15-12f0a0011005;STD-FILTER-001;Oil Filter Cartridge;Bosch;Original;80.00;15.00;USD;

@@ -9,13 +9,14 @@
 	<name>autorepairshop parent</name>
 
 	<properties>
-		<!-- OUR VERSION -->
+		
 		<revision>1.0.0-SNAPSHOT</revision>
 
-		<!-- DEPENDENCIES VERSION -->
+		
 		<jdk.version>21</jdk.version>
 		<cds.services.version>4.8.1</cds.services.version>
 		<spring.boot.version>3.5.13</spring.boot.version>
+		<cloud.sdk.version>5.20.0</cloud.sdk.version>
 
 		<cds.install-node.downloadUrl>https://nodejs.org/dist/</cds.install-node.downloadUrl>
 		<project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
@@ -28,7 +29,7 @@
 
 	<dependencyManagement>
 		<dependencies>
-			<!-- CDS SERVICES -->
+			
 			<dependency>
 				<groupId>com.sap.cds</groupId>
 				<artifactId>cds-services-bom</artifactId>
@@ -37,11 +38,20 @@
 				<scope>import</scope>
 			</dependency>
 
-			<!-- SPRING BOOT -->
+			
 			<dependency>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-dependencies</artifactId>
 				<version>${spring.boot.version}</version>
+				<type>pom</type>
+				<scope>import</scope>
+			</dependency>
+
+			
+			<dependency>
+				<groupId>com.sap.cloud.sdk</groupId>
+				<artifactId>sdk-bom</artifactId>
+				<version>${cloud.sdk.version}</version>
 				<type>pom</type>
 				<scope>import</scope>
 			</dependency>
@@ -51,7 +61,7 @@
 	<build>
 		<pluginManagement>
 			<plugins>
-				<!-- MAKE CDS PLUGIN RUNNABLE FROM ROOT -->
+				
 				<plugin>
 					<groupId>com.sap.cds</groupId>
 					<artifactId>cds-maven-plugin</artifactId>
@@ -61,7 +71,7 @@
 		</pluginManagement>
 
 		<plugins>
-			<!-- JAVA VERSION -->
+			
 			<plugin>
 				<artifactId>maven-compiler-plugin</artifactId>
 				<version>3.15.0</version>
@@ -71,7 +81,7 @@
 				</configuration>
 			</plugin>
 
-			<!-- MAKE SPRING BOOT PLUGIN RUNNABLE FROM ROOT -->
+			
 			<plugin>
 				<groupId>org.springframework.boot</groupId>
 				<artifactId>spring-boot-maven-plugin</artifactId>
@@ -81,13 +91,13 @@
 				</configuration>
 			</plugin>
 
-			<!-- SUREFIRE VERSION -->
+			
 			<plugin>
 				<artifactId>maven-surefire-plugin</artifactId>
 				<version>3.5.5</version>
 			</plugin>
 
-			<!-- POM FLATTENING FOR CI FRIENDLY VERSIONS -->
+			
 			<plugin>
 				<groupId>org.codehaus.mojo</groupId>
 				<artifactId>flatten-maven-plugin</artifactId>
@@ -114,7 +124,7 @@
 				</executions>
 			</plugin>
 
-			<!-- PROJECT STRUCTURE CHECKS -->
+			
 			<plugin>
 				<artifactId>maven-enforcer-plugin</artifactId>
 				<version>3.6.2</version>

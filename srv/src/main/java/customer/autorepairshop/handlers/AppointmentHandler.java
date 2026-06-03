@@ -5,6 +5,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 import cds.gen.com.sap.autorepair.ItemType;
@@ -32,7 +33,6 @@ import cds.gen.repairservice.MasterLogs_;
 import cds.gen.repairservice.RepairService_;
 import cds.gen.repairservice.Stocks;
 import cds.gen.repairservice.Stocks_;
-
 
 @Component
 @ServiceName(RepairService_.CDS_NAME)
@@ -66,6 +66,15 @@ public class AppointmentHandler implements EventHandler {
         }
     }
 
+    private static final Map<String, Set<String>> ALLOWED_STATUS_TRANSITIONS = Map.of(
+            Status.NEW,           Set.of(Status.PENDING,       Status.IN_INSPECTION),
+            Status.PENDING,       Set.of(Status.APPROVED,      Status.IN_INSPECTION),
+            Status.APPROVED,      Set.of(Status.IN_INSPECTION, Status.INPROGRESS),
+            Status.IN_INSPECTION, Set.of(Status.INPROGRESS),
+            Status.INPROGRESS,    Set.of(Status.CLOSED),
+            Status.CLOSED,        Set.of()
+    );
+
     @Before(event = CqnService.EVENT_UPDATE, entity = Appointments_.CDS_NAME)
     public void validateStatusTransition(List<Appointments> appointments) {
         if (appointments == null || appointments.isEmpty()) {
@@ -73,6 +82,8 @@ public class AppointmentHandler implements EventHandler {
         }
 
         for (Appointments appointment : appointments) {
+            validateStatusFlow(appointment);
+
             if (!Status.INPROGRESS.equals(appointment.getStatus())) {
                 continue;
             }
@@ -81,6 +92,31 @@ public class AppointmentHandler implements EventHandler {
 
             validateApprovedTasksPresent(appointmentItems);
             validateCriticalPartsAvailable(appointmentItems);
+        }
+    }
+
+    private void validateStatusFlow(Appointments patch) {
+        if (!patch.containsKey(Appointments.STATUS) || patch.getId() == null) {
+            return;
+        }
+        String target = patch.getStatus();
+        if (target == null) {
+            return;
+        }
+        String current = db.run(Select.from(Appointments_.class)
+                        .columns(a -> a.status())
+                        .where(a -> a.ID().eq(patch.getId())))
+                .first(Appointments.class)
+                .map(Appointments::getStatus)
+                .orElse(null);
+        if (current == null || current.equals(target)) {
+            return;
+        }
+        Set<String> allowed = ALLOWED_STATUS_TRANSITIONS.getOrDefault(current, Set.of());
+        if (!allowed.contains(target)) {
+            throw new ServiceException(ErrorStatuses.BAD_REQUEST,
+                    String.format("Illegal status transition '%s' \u2192 '%s'. Allowed next states: %s",
+                            current, target, allowed.isEmpty() ? "<none, terminal state>" : allowed));
         }
     }
 
