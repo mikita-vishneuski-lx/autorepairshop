@@ -1,4 +1,5 @@
-parent_ID;pos;type;description;quantity;price;currency_code;confirmedByClient
-9f1c2d68-1a6b-4e9a-8db5-4f0c3b2a1001;10;Work;Engine oil replacement labor;1;50.00;USD;true
-9f1c2d68-1a6b-4e9a-8db5-4f0c3b2a1001;20;Part;Premium 5W-30 synthetic engine oil;4;25.00;USD;true
-2d7a0f54-8d18-4b64-9c4f-6a2dcb551002;10;Part;Front brake pad kit;2;225.00;USD;false
+parent_ID;pos;type;description;unitPrice;quantity;duration;currency_code;confirmedByClient;itemStatus
+9f1c2d68-1a6b-4e9a-8db5-4f0c3b2a1001;10;Work;Engine oil replacement labor;50.00;;1.00;USD;true;Proposed
+9f1c2d68-1a6b-4e9a-8db5-4f0c3b2a1001;20;Part;Premium 5W-30 synthetic engine oil;25.00;4;;USD;true;Proposed
+2d7a0f54-8d18-4b64-9c4f-6a2dcb551002;10;Part;Front brake pad kit;225.00;2;;USD;false;Proposed
+3a4b5c6d-7e8f-4a9b-bc8d-9e0f1a2b1005;10;Work;Inspection labor;100.00;;1.00;USD;false;Proposed

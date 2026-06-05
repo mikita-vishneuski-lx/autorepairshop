@@ -14,6 +14,7 @@ import customer.autorepairshop.Application;
 import static org.hamcrest.Matchers.hasSize;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultHandlers.print;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
@@ -63,14 +64,81 @@ public class SecurityIT {
 
     @Test
     @WithMockUser(username = "client1", roles = "Client")
-    public void clientCanApproveOwnPendingAppointment() throws Exception {
+    public void clientCanInvokeApproveItemOnOwnAppointment() throws Exception {
+        String draftEditUrl = "/odata/v4/RepairService/Appointments(ID=" + APPT_BRAKE_CLIENT1 + ",IsActiveEntity=true)/RepairService.draftEdit";
+        String itemUrl = "/odata/v4/RepairService/Appointments_Items(parent_ID=" + APPT_BRAKE_CLIENT1 + ",pos=10,IsActiveEntity=false)/RepairService.approveItem";
 
-        mockMvc.perform(patch("/odata/v4/RepairService/Appointments(ID=" + APPT_BRAKE_CLIENT1 + ",IsActiveEntity=true)")
+        mockMvc.perform(post(draftEditUrl).contentType(MediaType.APPLICATION_JSON).content("{}"))
+               .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(post(itemUrl)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{ \"status\": \"Approved\" }"))
+                .content("{}"))
                 .andDo(print())
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.status").value("Approved"));
+                .andExpect(jsonPath("$.itemStatus").value("Approved"));
+    }
+
+    @Test
+    @WithMockUser(username = "client1", roles = "Client")
+    public void clientCannotDeleteAppointment() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .delete("/odata/v4/RepairService/Appointments(ID=" + APPT_BRAKE_CLIENT1 + ",IsActiveEntity=true)"))
+                .andDo(print())
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "client1", roles = "Client")
+    public void clientCannotApplyStandardMaintenance() throws Exception {
+        String draftEditUrl = "/odata/v4/RepairService/Appointments(ID=" + APPT_BRAKE_CLIENT1 + ",IsActiveEntity=true)/RepairService.draftEdit";
+        String actionUrl = "/odata/v4/RepairService/Appointments(ID=" + APPT_BRAKE_CLIENT1 + ",IsActiveEntity=false)/RepairService.applyStandardMaintenance";
+
+        mockMvc.perform(post(draftEditUrl).contentType(MediaType.APPLICATION_JSON).content("{}"))
+               .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(post(actionUrl).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andDo(print())
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "client1", roles = "Client")
+    public void clientCannotStartInspection() throws Exception {
+        String draftEditUrl = "/odata/v4/RepairService/Appointments(ID=" + APPT_BRAKE_CLIENT1 + ",IsActiveEntity=true)/RepairService.draftEdit";
+        String actionUrl = "/odata/v4/RepairService/Appointments(ID=" + APPT_BRAKE_CLIENT1 + ",IsActiveEntity=false)/RepairService.startInspection";
+
+        mockMvc.perform(post(draftEditUrl).contentType(MediaType.APPLICATION_JSON).content("{}"))
+               .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(post(actionUrl).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andDo(print())
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "bob", roles = "Mechanic")
+    public void mechanicCannotStartInspection() throws Exception {
+        String draftEditUrl = "/odata/v4/RepairService/Appointments(ID=" + APPT_BRAKE_CLIENT1 + ",IsActiveEntity=true)/RepairService.draftEdit";
+        String actionUrl = "/odata/v4/RepairService/Appointments(ID=" + APPT_BRAKE_CLIENT1 + ",IsActiveEntity=false)/RepairService.startInspection";
+
+        mockMvc.perform(post(draftEditUrl).contentType(MediaType.APPLICATION_JSON).content("{}"))
+               .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(post(actionUrl).contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andDo(print())
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "client1", roles = "Client")
+    public void clientSeesCanFlagsConsistentWithRole() throws Exception {
+        mockMvc.perform(get("/odata/v4/RepairService/Appointments(ID=" + APPT_BRAKE_CLIENT1 + ",IsActiveEntity=true)"))
+                .andDo(print())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.canApplyStandardMaintenance").value(false))
+                .andExpect(jsonPath("$.canStartInspection").value(false))
+                .andExpect(jsonPath("$.canClose").value(false));
     }
 
     @Test
@@ -86,35 +154,33 @@ public class SecurityIT {
     @Test
     @WithMockUser(username = "bob", roles = "Mechanic")
     public void mechanicCannotPatchItemPrice() throws Exception {
-        String itemUrl = "/odata/v4/RepairService/Appointments_Items(parent_ID=" + APPT_OIL_CLIENT1 + ",pos=10,IsActiveEntity=true)";
-        mockMvc.perform(patch(itemUrl)
+        String draftEditUrl = "/odata/v4/RepairService/Appointments(ID=" + APPT_OIL_CLIENT1 + ",IsActiveEntity=true)/RepairService.draftEdit";
+        String draftItemUrl = "/odata/v4/RepairService/Appointments_Items(parent_ID=" + APPT_OIL_CLIENT1 + ",pos=10,IsActiveEntity=false)";
+
+        mockMvc.perform(post(draftEditUrl).contentType(MediaType.APPLICATION_JSON).content("{}"))
+               .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(patch(draftItemUrl)
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{ \"price\": 999.99 }"))
+                .content("{ \"quantity\": 99 }"))
                 .andDo(print())
                 .andExpect(status().isForbidden());
     }
 
     @Test
     @WithMockUser(username = "alice", roles = "Manager")
-    public void managerCanUpdateVinWhenStatusPending() throws Exception {
+    public void managerCannotPatchHeader() throws Exception {
 
         mockMvc.perform(patch("/odata/v4/RepairService/Appointments(ID=" + APPT_BRAKE_CLIENT1 + ",IsActiveEntity=true)")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{ \"vin\": \"WAU00000000000099\" }"))
                 .andDo(print())
-                .andExpect(status().isOk())
-                .andExpect(jsonPath("$.vin").value("WAU00000000000099"));
+                .andExpect(status().isForbidden());
     }
 
     @Test
-    @WithMockUser(username = "alice", roles = "Manager")
-    public void managerCannotUpdateVinOncePastInspectionThreshold() throws Exception {
-
-        mockMvc.perform(patch("/odata/v4/RepairService/Appointments(ID=" + APPT_OIL_CLIENT1 + ",IsActiveEntity=true)")
-                .contentType(MediaType.APPLICATION_JSON)
-                .content("{ \"status\": \"In Inspection\" }"))
-                .andDo(print())
-                .andExpect(status().isOk());
+    @WithMockUser(username = "client1", roles = "Client")
+    public void clientCannotUpdateVinOncePastCreatedStatus() throws Exception {
 
         mockMvc.perform(patch("/odata/v4/RepairService/Appointments(ID=" + APPT_OIL_CLIENT1 + ",IsActiveEntity=true)")
                 .contentType(MediaType.APPLICATION_JSON)

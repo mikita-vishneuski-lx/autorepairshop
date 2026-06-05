@@ -1,7 +1,6 @@
 package customer.autorepairshop.handlers;
 
 import java.math.BigDecimal;
-import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -22,6 +21,7 @@ import com.sap.cds.services.handler.annotations.ServiceName;
 import com.sap.cds.services.persistence.PersistenceService;
 import com.sap.cds.services.request.UserInfo;
 
+import cds.gen.com.sap.autorepair.ItemType;
 import cds.gen.repairservice.Appointments;
 import cds.gen.repairservice.AppointmentsItems;
 import cds.gen.repairservice.AppointmentsItems_;
@@ -38,33 +38,22 @@ public class AppointmentSecurityHandler implements EventHandler {
 
     static final String FIELD_CONFIRMED_BY_CLIENT = "confirmedByClient";
 
-    private static final Set<String> CLIENT_WRITABLE = Set.of(
-            Appointments.STATUS);
-
     private static final Set<String> CLIENT_WRITABLE_ITEM = Set.of(
             FIELD_CONFIRMED_BY_CLIENT);
 
-    private static final Set<String> HEADER_PROTECTED = Set.of(
-            Appointments.VIN,
-            Appointments.BRAND,
-            Appointments.CAR_NUMBER,
-            Appointments.PRODUCTION_YEAR,
-            Appointments.DESCRIPTION,
-            Appointments.ESTIMATED_AMOUNT);
+    private static final Set<String> MECHANIC_WRITABLE_ITEM = Set.of(
+            AppointmentsItems.QUANTITY,
+            AppointmentsItems.DURATION,
+            AppointmentsItems.STOCK_ITEM_ID,
+            AppointmentsItems.SERVICES_OFFERED_ITEM_ID);
 
-    private static final Set<String> MECHANIC_PROTECTED = Set.of(
-            Appointments.STATUS,
-            Appointments.APPOINTMENT_NO);
+    private static final Set<String> CANCELLABLE_STATES = Set.of(
+            "Created",
+            "Inspection",
+            "Waiting for approval");
 
-    private static final Set<String> ITEM_PRICING_PROTECTED = Set.of(
-            AppointmentsItems.PRICE,
-            AppointmentsItems.CURRENCY_CODE);
-
-    private static final Map<String, Set<String>> CLIENT_STATUS_TRANSITIONS = Map.of(
-            "Pending", Set.of("Approved"));
-
-    private static final Set<String> POST_INSPECTION_STATES = Set.of(
-            "In Inspection", "In Progress", "Closed");
+    private static final Set<String> CLIENT_CONFIRM_EDITABLE_STATES = Set.of(
+            "Waiting for approval");
 
     private static final Set<String> TECHNICAL_FIELDS = Set.of(
             "ID", "parent", "parent_ID", "pos",
@@ -72,6 +61,7 @@ public class AppointmentSecurityHandler implements EventHandler {
             "IsActiveEntity", "HasActiveEntity", "HasDraftEntity",
             "DraftAdministrativeData", "DraftAdministrativeData_DraftUUID");
 
+    private static final int FC_HIDDEN    = 0;
     private static final int FC_READ_ONLY = 1;
     private static final int FC_EDITABLE  = 3;
     private static final int FC_MANDATORY = 7;
@@ -89,32 +79,24 @@ public class AppointmentSecurityHandler implements EventHandler {
         if (rows == null || rows.isEmpty()) {
             return;
         }
-        boolean isClient   = userInfo.hasRole(ROLE_CLIENT);
-        boolean isMechanic = userInfo.hasRole(ROLE_MECHANIC);
         boolean isManager  = userInfo.hasRole(ROLE_MANAGER);
+        boolean isMechanic = userInfo.hasRole(ROLE_MECHANIC);
+        boolean isClient   = userInfo.hasRole(ROLE_CLIENT);
 
         for (Appointments row : rows) {
             String status = row.getStatus();
-            boolean inspectionLocked = status != null && POST_INSPECTION_STATES.contains(status);
+            boolean isDraft = Boolean.FALSE.equals(row.getIsActiveEntity());
+            boolean headerEditable = isClient && "Created".equals(status);
+            row.put("headerFieldControl", headerEditable ? FC_EDITABLE : FC_READ_ONLY);
 
-            int header;
-            int statusControl;
-
-            if (isManager) {
-                header        = inspectionLocked ? FC_READ_ONLY : FC_EDITABLE;
-                statusControl = FC_EDITABLE;
-            } else if (isMechanic) {
-                header        = FC_READ_ONLY;
-                statusControl = FC_READ_ONLY;
-            } else if (isClient) {
-                header        = FC_READ_ONLY;
-                statusControl = CLIENT_STATUS_TRANSITIONS.containsKey(status) ? FC_EDITABLE : FC_READ_ONLY;
-            } else {
-                header        = FC_READ_ONLY;
-                statusControl = FC_READ_ONLY;
-            }
-            row.put("headerFieldControl", header);
-            row.put("statusFieldControl", statusControl);
+            row.put("canApplyStandardMaintenance", isMechanic && isDraft && "Inspection".equals(status));
+            row.put("canStartInspection",          isManager  && isDraft && "Created".equals(status));
+            row.put("canRequestApproval",          isMechanic && isDraft && "Inspection".equals(status));
+            row.put("canComplete",                 isMechanic && isDraft && "In Progress".equals(status));
+            row.put("canClose",                    isMechanic && isDraft && "Completed".equals(status));
+            row.put("canCancel",                   (isClient || isManager) && isDraft && CANCELLABLE_STATES.contains(status));
+            row.put("canAddItems",                 isMechanic && isDraft
+                    && ("Inspection".equals(status) || "In Progress".equals(status)));
         }
     }
 
@@ -125,39 +107,47 @@ public class AppointmentSecurityHandler implements EventHandler {
         }
         boolean isClient   = userInfo.hasRole(ROLE_CLIENT);
         boolean isMechanic = userInfo.hasRole(ROLE_MECHANIC);
-        boolean isManager  = userInfo.hasRole(ROLE_MANAGER);
 
         for (AppointmentsItems row : rows) {
             String parentStatus = loadParentStatus(row);
-            boolean inspectionLocked = parentStatus != null && POST_INSPECTION_STATES.contains(parentStatus);
 
             boolean canEditRow;
             int confirmControl;
             if (isMechanic) {
-                canEditRow     = true;
-                confirmControl = FC_READ_ONLY;
-            } else if (isManager) {
-                canEditRow     = !inspectionLocked;
+                canEditRow     = "Inspection".equals(parentStatus);
                 confirmControl = FC_READ_ONLY;
             } else if (isClient) {
                 canEditRow     = false;
-
-                confirmControl = inspectionLocked ? FC_READ_ONLY : FC_EDITABLE;
+                confirmControl = (parentStatus != null
+                        && CLIENT_CONFIRM_EDITABLE_STATES.contains(parentStatus))
+                        ? FC_EDITABLE : FC_READ_ONLY;
             } else {
                 canEditRow     = false;
                 confirmControl = FC_READ_ONLY;
             }
-            row.put("rowFieldControl",     canEditRow ? FC_EDITABLE  : FC_READ_ONLY);
             row.put("typeFieldControl",    canEditRow ? FC_MANDATORY : FC_READ_ONLY);
-
             row.put("priceFieldControl",   FC_READ_ONLY);
             row.put("confirmFieldControl", confirmControl);
+
+            int rowControl = canEditRow ? FC_EDITABLE : FC_READ_ONLY;
+            boolean isWork = ItemType.WORK.equals(row.getType());
+            boolean isPart = ItemType.PART.equals(row.getType());
+            row.put("quantityFieldControl", isWork ? FC_HIDDEN : (isPart ? rowControl : FC_READ_ONLY));
+            row.put("durationFieldControl", isPart ? FC_HIDDEN : (isWork ? rowControl : FC_READ_ONLY));
+
+            boolean canDecide = isClient
+                    && Boolean.FALSE.equals(row.getIsActiveEntity())
+                    && "Proposed".equals(row.getItemStatus())
+                    && parentStatus != null
+                    && CLIENT_CONFIRM_EDITABLE_STATES.contains(parentStatus);
+            row.put("canApproveItem", canDecide);
+            row.put("canRejectItem",  canDecide);
         }
     }
 
     @Before(event = { CqnService.EVENT_UPDATE, DraftService.EVENT_DRAFT_PATCH }, entity = Appointments_.CDS_NAME)
     public void enforceAppointmentUpdate(List<Appointments> appointments) {
-        if (appointments == null || appointments.isEmpty()) {
+        if (appointments == null || appointments.isEmpty() || userInfo.isPrivileged()) {
             return;
         }
         boolean isClient   = userInfo.hasRole(ROLE_CLIENT);
@@ -171,55 +161,76 @@ public class AppointmentSecurityHandler implements EventHandler {
                 continue;
             }
 
-            if (isManager) {
-                if (current != null && POST_INSPECTION_STATES.contains(current.getStatus())) {
-                    Set<String> bad = intersect(changed, HEADER_PROTECTED);
-                    if (!bad.isEmpty()) {
-                        throw forbidden(
-                                "Header fields are locked once inspection has started: " + bad);
-                    }
-                }
-            } else if (isMechanic) {
-                Set<String> bad = intersect(changed, HEADER_PROTECTED);
-                bad.addAll(intersect(changed, MECHANIC_PROTECTED));
-                if (!bad.isEmpty()) {
+            if (changed.contains(Appointments.STATUS)) {
+                throw forbidden(
+                        "Status can only be changed through workflow actions (startInspection, requestApproval, approveItem, rejectItem, complete, close, cancel).");
+            }
+
+            if (isMechanic || isManager) {
+                throw forbidden(
+                        "Only the client may edit appointment header fields.");
+            }
+            if (isClient) {
+                String currentStatus = current != null ? current.getStatus() : null;
+                if (!"Created".equals(currentStatus)) {
                     throw forbidden(
-                            "Mechanics may only maintain items; forbidden fields: " + bad);
+                            "Header fields can only be edited while the appointment is in 'Created' status.");
                 }
-            } else if (isClient) {
-                Set<String> illegal = changed.stream()
-                        .filter(f -> !CLIENT_WRITABLE.contains(f))
-                        .collect(Collectors.toSet());
-                if (!illegal.isEmpty()) {
-                    throw forbidden(
-                            "Clients may only update status / confirmation; forbidden fields: " + illegal);
-                }
-                validateClientStatusTransition(patch, current);
             }
         }
     }
 
     @Before(event = { CqnService.EVENT_CREATE, DraftService.EVENT_DRAFT_NEW },
             entity = AppointmentsItems_.CDS_NAME)
-    public void enforceItemCreate(List<AppointmentsItems> items) {
-        if (items == null || items.isEmpty()) {
+    public void enforceItemCreate(com.sap.cds.services.EventContext context, List<AppointmentsItems> items) {
+        if (items == null || items.isEmpty() || userInfo.isPrivileged()) {
             return;
         }
-        if (isPureClient()) {
+        if (!userInfo.hasRole(ROLE_MECHANIC)) {
             throw forbidden(
-                    "Clients cannot add work / parts items; only the technician maintains them.");
+                    "Only mechanics may add work / parts items.");
         }
+        String contextParentId = parentIdFromContext(context);
+        for (AppointmentsItems item : items) {
+            if (item.getParentId() == null && contextParentId != null) {
+                item.setParentId(contextParentId);
+            }
+            String parentStatus = loadParentStatus(item);
+            if (!"Inspection".equals(parentStatus) && !"In Progress".equals(parentStatus)) {
+                throw forbidden(
+                        "Items can only be added while the appointment is under inspection or in progress.");
+            }
+        }
+    }
+
+    private static String parentIdFromContext(com.sap.cds.services.EventContext context) {
+        Object cqn = context.get("cqn");
+        com.sap.cds.ql.cqn.CqnStructuredTypeRef ref = null;
+        if (cqn instanceof com.sap.cds.ql.cqn.CqnInsert insert) {
+            ref = insert.ref();
+        } else if (cqn instanceof com.sap.cds.ql.cqn.CqnUpsert upsert) {
+            ref = upsert.ref();
+        }
+        if (ref == null) {
+            return null;
+        }
+        com.sap.cds.ql.cqn.AnalysisResult analysis =
+                com.sap.cds.ql.cqn.CqnAnalyzer.create(context.getModel()).analyze(ref);
+        Object id = analysis.targetKeys().get("parent_ID");
+        if (id == null) {
+            id = analysis.rootKeys().get("ID");
+        }
+        return id == null ? null : id.toString();
     }
 
     @Before(event = { CqnService.EVENT_UPDATE, DraftService.EVENT_DRAFT_PATCH },
             entity = AppointmentsItems_.CDS_NAME)
     public void enforceItemUpdate(List<AppointmentsItems> items) {
-        if (items == null || items.isEmpty()) {
+        if (items == null || items.isEmpty() || userInfo.isPrivileged()) {
             return;
         }
         boolean isClient   = userInfo.hasRole(ROLE_CLIENT);
         boolean isMechanic = userInfo.hasRole(ROLE_MECHANIC);
-        boolean isManager  = userInfo.hasRole(ROLE_MANAGER);
 
         for (AppointmentsItems item : items) {
             AppointmentsItems current = loadCurrentItem(item);
@@ -228,8 +239,9 @@ public class AppointmentSecurityHandler implements EventHandler {
                 continue;
             }
 
-            if (isClient && !isMechanic && !isManager) {
+            String parentStatus = loadParentStatus(item);
 
+            if (isClient) {
                 Set<String> illegal = changed.stream()
                         .filter(f -> !CLIENT_WRITABLE_ITEM.contains(f))
                         .collect(Collectors.toSet());
@@ -237,54 +249,65 @@ public class AppointmentSecurityHandler implements EventHandler {
                     throw forbidden(
                             "Clients may only toggle item confirmation; forbidden fields: " + illegal);
                 }
-                String parentStatus = loadParentStatus(item);
-                if (parentStatus != null && POST_INSPECTION_STATES.contains(parentStatus)) {
+                if (parentStatus == null || !CLIENT_CONFIRM_EDITABLE_STATES.contains(parentStatus)) {
                     throw forbidden(
-                            "Item confirmation is locked once inspection has started.");
+                            "Item confirmation can only be toggled while the appointment is waiting for approval.");
                 }
                 continue;
             }
-            if (isManager) {
-                String parentStatus = loadParentStatus(item);
-                if (parentStatus != null && POST_INSPECTION_STATES.contains(parentStatus)) {
-                    Set<String> bad = intersect(changed, ITEM_PRICING_PROTECTED);
-                    if (!bad.isEmpty()) {
-                        throw forbidden(
-                                "Item pricing is derived from master data and cannot be set manually: " + bad);
-                    }
-                }
-            } else if (isMechanic) {
-                Set<String> bad = intersect(changed, ITEM_PRICING_PROTECTED);
-                bad.addAll(intersect(changed, CLIENT_WRITABLE_ITEM));
-                if (!bad.isEmpty()) {
+            if (isMechanic) {
+                if (!"Inspection".equals(parentStatus)) {
                     throw forbidden(
-                            "Mechanics may not change item pricing or client confirmation: " + bad);
+                            "Items can only be modified while the appointment is under inspection.");
                 }
+                Set<String> illegal = changed.stream()
+                        .filter(f -> !MECHANIC_WRITABLE_ITEM.contains(f))
+                        .collect(Collectors.toSet());
+                if (!illegal.isEmpty()) {
+                    throw forbidden(
+                            "Mechanics may only set quantity or pick a stock part / offered service; forbidden fields: "
+                                    + illegal);
+                }
+                continue;
             }
+            throw forbidden("Managers may not modify items.");
         }
     }
 
     @Before(event = { CqnService.EVENT_DELETE, DraftService.EVENT_DRAFT_CANCEL },
             entity = AppointmentsItems_.CDS_NAME)
-    public void enforceItemDelete() {
-        if (isPureClient()) {
-            throw forbidden(
-                    "Clients cannot remove work / parts items; only the technician maintains them.");
+    public void enforceItemDelete(com.sap.cds.services.EventContext context) {
+        if (userInfo.isPrivileged()) {
+            return;
         }
-    }
-
-    private boolean isPureClient() {
-        return userInfo.hasRole(ROLE_CLIENT)
-                && !userInfo.hasRole(ROLE_MECHANIC)
-                && !userInfo.hasRole(ROLE_MANAGER);
+        if (!userInfo.hasRole(ROLE_MECHANIC)) {
+            throw forbidden(
+                    "Only mechanics may remove work / parts items.");
+        }
+        Object cqn = context.get("cqn");
+        if (!(cqn instanceof com.sap.cds.ql.cqn.CqnDelete deleteCqn)) {
+            return;
+        }
+        Map<String, Object> keys = com.sap.cds.ql.cqn.CqnAnalyzer.create(context.getModel())
+                .analyze(deleteCqn.ref()).targetKeys();
+        Object parentId = keys.get("parent_ID");
+        if (parentId == null) {
+            return;
+        }
+        String parentStatus = db.run(Select.from(Appointments_.class)
+                        .columns(a -> a.status())
+                        .where(a -> a.ID().eq(parentId.toString())))
+                .first(Appointments.class)
+                .map(Appointments::getStatus)
+                .orElse(null);
+        if (!"Inspection".equals(parentStatus)) {
+            throw forbidden(
+                    "Items can only be deleted while the appointment is under inspection.");
+        }
     }
 
     private static ServiceException forbidden(String message) {
         return new ServiceException(ErrorStatuses.FORBIDDEN, message);
-    }
-
-    private static Set<String> intersect(Set<String> a, Set<String> b) {
-        return a.stream().filter(b::contains).collect(Collectors.toCollection(HashSet::new));
     }
 
     private Appointments loadCurrentAppointment(Appointments patch) {
@@ -350,21 +373,5 @@ public class AppointmentSecurityHandler implements EventHandler {
             return new BigDecimal(na.toString()).compareTo(new BigDecimal(nb.toString())) == 0;
         }
         return false;
-    }
-
-    private void validateClientStatusTransition(Appointments patch, Appointments current) {
-        if (!patch.containsKey(Appointments.STATUS) || current == null) {
-            return;
-        }
-        String from = current.getStatus();
-        String to   = patch.getStatus();
-        if (Objects.equals(from, to)) {
-            return;
-        }
-        Set<String> allowed = CLIENT_STATUS_TRANSITIONS.getOrDefault(from, Set.of());
-        if (!allowed.contains(to)) {
-            throw forbidden(String.format(
-                    "Clients may not transition status from '%s' to '%s'", from, to));
-        }
     }
 }

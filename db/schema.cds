@@ -18,7 +18,7 @@ entity Appointments : cuid, managed {
     productionYear : Integer;
 
     description: String(1000);
-    status: Status default 'New';
+    status: String(40) default 'Created';
 
     estimatedAmount: Decimal(15, 2);
     totalAmount: Decimal(15, 2);
@@ -36,13 +36,16 @@ entity Appointments.Items {
 
     description : String(255);
 
-    quantity : Decimal(10, 2);
-    price : Decimal(15, 2);
-    currency: Currency;
+    unitPrice : Decimal(15, 2);
 
-    duration : String(50);
+    quantity : Decimal(10, 2);
+
+    duration : Decimal(10, 2);
+
+    currency : Currency;
 
     confirmedByClient : Boolean default false;
+    itemStatus : String(20) default 'Proposed';
 
     stockItem : Association to Stocks;
     servicesOfferedItem : Association to OfferedServices;
@@ -76,29 +79,27 @@ entity OfferedServices : cuid, managed {
     @mandatory
     name: String(255);
 
-    standardHour : Decimal(10, 2);
-
-    price : Decimal(15, 2);
+    standardHour : Decimal(15, 2);
     currency: Currency;
-}
-
-type Status : String enum {
-    NEW = 'New';
-    PENDING = 'Pending';
-    IN_INSPECTION = 'In Inspection';
-    APPROVED = 'Approved';
-    INPROGRESS = 'In Progress';
-    CLOSED = 'Closed';
 }
 
 entity AppointmentStatuses : CodeList {
     key code : String enum {
-        NEW = 'New';
-        PENDING = 'Pending';
-        IN_INSPECTION = 'In Inspection';
+        CREATED              = 'Created';
+        INSPECTION           = 'Inspection';
+        WAITING_FOR_APPROVAL = 'Waiting for approval';
+        IN_PROGRESS          = 'In Progress';
+        COMPLETED            = 'Completed';
+        CLOSED               = 'Closed';
+        CANCELLED            = 'Cancelled';
+    };
+}
+
+entity AppointmentItemStatuses : CodeList {
+    key code : String enum {
+        PROPOSED = 'Proposed';
         APPROVED = 'Approved';
-        INPROGRESS = 'In Progress';
-        CLOSED = 'Closed';
+        REJECTED = 'Rejected';
     };
 }
 
@@ -116,7 +117,7 @@ entity MasterLogs : cuid, managed {
     appointment    : Association to Appointments;
     appointmentNo  : String(20);
     workDescription : String(255);
-    duration       : String(50);
+    duration       : Decimal(10, 2);
     price          : Decimal(15, 2);
     currency       : Currency;
     createdFromPos : Integer;

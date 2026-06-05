@@ -1,5 +1,6 @@
 ID;appointmentNo;carNumber;vin;brand;productionYear;description;status;estimatedAmount;totalAmount;currency_code;createdBy
-9f1c2d68-1a6b-4e9a-8db5-4f0c3b2a1001;APT-1001;XYZ-1234;WBA00000000000001;BMW;2018;Scheduled annual oil service;Approved;180.00;150.00;USD;client1
-2d7a0f54-8d18-4b64-9c4f-6a2dcb551002;APT-1002;ABC-9876;WAU00000000000002;Audi;2020;Front axle brake pad replacement;Pending;500.00;450.00;USD;client1
-5b3c7a91-9f2e-4c18-a7b9-1d6e3f441003;APT-1003;LMN-4567;WDC00000000000003;Mercedes;2019;Powertrain diagnostic assessment;In Progress;250.00;0.00;USD;client2
-7c8d9e10-2f3a-4b5c-8d7e-9f0a1b2c1004;APT-1004;DEF-1111;WVW00000000000004;Volkswagen;2021;Seasonal tire service request;Approved;750.00;800.00;USD;client2
+9f1c2d68-1a6b-4e9a-8db5-4f0c3b2a1001;APT-1001;XYZ-1234;WBA00000000000001;BMW;2018;Scheduled annual oil service;Waiting for approval;180.00;150.00;USD;client1
+2d7a0f54-8d18-4b64-9c4f-6a2dcb551002;APT-1002;ABC-9876;WAU00000000000002;Audi;2020;Front axle brake pad replacement;Waiting for approval;500.00;450.00;USD;client1
+5b3c7a91-9f2e-4c18-a7b9-1d6e3f441003;APT-1003;LMN-4567;WDC00000000000003;Mercedes;2019;Powertrain diagnostic assessment;Waiting for approval;250.00;0.00;USD;client2
+7c8d9e10-2f3a-4b5c-8d7e-9f0a1b2c1004;APT-1004;DEF-1111;WVW00000000000004;Volkswagen;2021;Seasonal tire service request;Created;750.00;800.00;USD;client2
+3a4b5c6d-7e8f-4a9b-bc8d-9e0f1a2b1005;APT-1005;GHI-2222;WVW00000000000005;Skoda;2022;Inspection workshop sample;Inspection;200.00;100.00;USD;client2

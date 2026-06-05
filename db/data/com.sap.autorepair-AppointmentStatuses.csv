@@ -1,7 +1,8 @@
 code;name;descr
-New;New;Newly created appointment
-Pending;Pending;Waiting for client approval
-In Inspection;In Inspection;Vehicle is being inspected
-Approved;Approved;Approved by the client
-In Progress;In Progress;Work in progress
-Closed;Closed;Appointment completed
+Created;Created;Newly created appointment
+Inspection;Inspection;Vehicle is being inspected by the mechanic
+Waiting for approval;Waiting for approval;Quote ready, waiting for the client to approve
+In Progress;In Progress;Repair work is in progress
+Completed;Completed;All work and parts are done
+Closed;Closed;Client has picked up the vehicle
+Cancelled;Cancelled;Appointment was cancelled

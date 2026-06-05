@@ -1,34 +1,142 @@
 using RepairService from '../srv/repair-service';
 
 annotate RepairService.Appointments.Items with {
-    pos               @title: 'Pos.';
-    type              @title: 'Type'         @Common.FieldControl: typeFieldControl;
-    description       @title: 'Description'  @Common.FieldControl: rowFieldControl;
-    quantity          @title: 'Quantity'     @Common.FieldControl: rowFieldControl;
-    price             @title: 'Price'        @Common.FieldControl: priceFieldControl;
-    duration          @title: 'Duration'     @Common.FieldControl: rowFieldControl;
-    confirmedByClient @title: 'Confirmed'    @Common.FieldControl: confirmFieldControl;
-    rowFieldControl     @UI.Hidden;
-    typeFieldControl    @UI.Hidden;
-    priceFieldControl   @UI.Hidden;
-    confirmFieldControl @UI.Hidden;
+    pos               @UI.Hidden;
+    type              @title: 'Type'                @Core.Computed: true;
+    description       @title: 'Description'         @Core.Computed: true;
+    unitPrice         @title: 'Price / Hourly Rate' @Core.Computed: true
+                      @Measures.ISOCurrency: currency_code;
+    quantity          @title: 'Quantity'  @Common.FieldControl: quantityFieldControl;
+    duration          @title: 'Hours'     @Common.FieldControl: durationFieldControl;
+    totalPrice        @title: 'Total'     @Core.Computed: true
+                      @Measures.ISOCurrency: currency_code;
+    currency_code     @Core.Computed: true;
+    confirmedByClient @UI.Hidden;
+    canApproveItem    @UI.Hidden;
+    canRejectItem     @UI.Hidden;
+    itemStatus        @title: 'Decision'
+                      @Common.FieldControl: #ReadOnly
+                      @Common.ValueListWithFixedValues: true
+                      @Common.ValueList: {
+                          CollectionPath: 'AppointmentItemStatuses',
+                          Parameters    : [
+                              { $Type: 'Common.ValueListParameterInOut',
+                                LocalDataProperty: itemStatus,
+                                ValueListProperty: 'code' }
+                          ]
+                      };
+    quantityFieldControl  @UI.Hidden;
+    durationFieldControl  @UI.Hidden;
+    typeFieldControl      @UI.Hidden;
+    priceFieldControl     @UI.Hidden;
+    confirmFieldControl   @UI.Hidden;
+    itemStatusCriticality @UI.Hidden;
 };
 
-annotate RepairService.Appointments.Items with @(UI: {LineItem: [
-    {Value: pos},
-    {Value: type},
-    {Value: description},
-    {Value: quantity},
-    {Value: price},
-    {Value: confirmedByClient}
-]});
+annotate RepairService.Appointments.Items with @(
+    UI.CreateHidden: true,
+    Common.SideEffects #qty: {
+        SourceProperties: [quantity],
+        TargetProperties: ['totalPrice'],
+        TargetEntities  : [parent]
+    },
+    Common.SideEffects #dur: {
+        SourceProperties: [duration],
+        TargetProperties: ['totalPrice'],
+        TargetEntities  : [parent]
+    },
+    UI.LineItem    : [
+        {Value: type},
+        {Value: description},
+        {Value: unitPrice},
+        {Value: quantity},
+        {Value: duration},
+        {Value: totalPrice},
+        {Value: itemStatus,        Criticality: itemStatusCriticality},
+        {
+            $Type        : 'UI.DataFieldForAction',
+            Action       : 'RepairService.approveItem',
+            Label        : 'Approve',
+            Inline       : true,
+            ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canApproveItem' } } }
+        },
+        {
+            $Type        : 'UI.DataFieldForAction',
+            Action       : 'RepairService.rejectItem',
+            Label        : 'Reject',
+            Inline       : true,
+            ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canRejectItem' } } }
+        }
+    ]
+);
+
+annotate RepairService.Appointments.Items with actions {
+    approveItem
+    @Core.OperationAvailable: { $edmJson: { $Path: '_it/canApproveItem' } }
+    @Common.SideEffects: {
+        TargetProperties: ['_it/itemStatus', '_it/itemStatusCriticality'],
+        TargetEntities  : ['_it/parent', '_it/parent/items']
+    };
+
+    rejectItem
+    @Core.OperationAvailable: { $edmJson: { $Path: '_it/canRejectItem' } }
+    @Common.SideEffects: {
+        TargetProperties: ['_it/itemStatus', '_it/itemStatusCriticality'],
+        TargetEntities  : ['_it/parent', '_it/parent/items']
+    }
+};
 
 annotate RepairService.Appointments with @(UI: {
-    Identification             : [{
-        $Type : 'UI.DataFieldForAction',
-        Action: 'RepairService.applyStandardMaintenance',
-        Label : 'Standard Maintenance'
-    }],
+    Identification             : [
+        {
+            $Type        : 'UI.DataFieldForAction',
+            Action       : 'RepairService.startInspection',
+            Label        : 'Start Inspection',
+            ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canStartInspection' } } }
+        },
+        {
+            $Type        : 'UI.DataFieldForAction',
+            Action       : 'RepairService.requestApproval',
+            Label        : 'Request Approval',
+            ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canRequestApproval' } } }
+        },
+        {
+            $Type        : 'UI.DataFieldForAction',
+            Action       : 'RepairService.complete',
+            Label        : 'Complete',
+            ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canComplete' } } }
+        },
+        {
+            $Type        : 'UI.DataFieldForAction',
+            Action       : 'RepairService.close',
+            Label        : 'Close',
+            ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canClose' } } }
+        },
+        {
+            $Type        : 'UI.DataFieldForAction',
+            Action       : 'RepairService.cancel',
+            Label        : 'Cancel',
+            ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canCancel' } } }
+        },
+        {
+            $Type        : 'UI.DataFieldForAction',
+            Action       : 'RepairService.applyStandardMaintenance',
+            Label        : 'Standard Maintenance',
+            ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canApplyStandardMaintenance' } } }
+        },
+        {
+            $Type        : 'UI.DataFieldForAction',
+            Action       : 'RepairService.addPart',
+            Label        : 'Add Part',
+            ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canAddItems' } } }
+        },
+        {
+            $Type        : 'UI.DataFieldForAction',
+            Action       : 'RepairService.addWork',
+            Label        : 'Add Work',
+            ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canAddItems' } } }
+        }
+    ],
     HeaderInfo                 : {
         TypeName      : 'Appointment',
         TypeNamePlural: 'Appointments',
@@ -156,7 +264,7 @@ annotate RepairService.Appointments with {
                       @UI.MultiLineText
                       @Core.Description: 'What needs to be done (max 1000 chars)';
     status            @title       : 'Status'
-                      @Common.FieldControl: statusFieldControl
+                      @Common.FieldControl: #ReadOnly
                       @Common.ValueListWithFixedValues: true
                       @Common.ValueList: {
                           CollectionPath: 'AppointmentStatuses',
@@ -174,8 +282,14 @@ annotate RepairService.Appointments with {
                       @Core.Description: 'Live total of items (parts + work)';
     statusCriticality @UI.Hidden;
     headerFieldControl @UI.Hidden;
-    statusFieldControl @UI.Hidden;
     partsPercentage    @UI.Hidden @Core.Computed;
+    canApplyStandardMaintenance @UI.Hidden;
+    canStartInspection          @UI.Hidden;
+    canRequestApproval          @UI.Hidden;
+    canComplete                 @UI.Hidden;
+    canClose                    @UI.Hidden;
+    canCancel                   @UI.Hidden;
+    canAddItems                 @UI.Hidden;
 };
 
 annotate RepairService.Appointments with actions {
@@ -184,8 +298,33 @@ annotate RepairService.Appointments with actions {
         TargetEntities  : [items],
         TargetProperties: [totalAmount]
     }
-    @Core.OperationAvailable: {$edmJson: {$Eq: [
-        {$Path: 'IsActiveEntity'},
-        false
-    ]}}
+    @Core.OperationAvailable: { $edmJson: { $Path: 'in/canApplyStandardMaintenance' } };
+
+    startInspection
+    @Core.OperationAvailable: { $edmJson: { $Path: 'in/canStartInspection' } }
+    @Common.SideEffects: { TargetProperties: ['in/status', 'in/statusCriticality'] };
+
+    requestApproval
+    @Core.OperationAvailable: { $edmJson: { $Path: 'in/canRequestApproval' } }
+    @Common.SideEffects: { TargetProperties: ['in/status', 'in/statusCriticality'] };
+
+    complete
+    @Core.OperationAvailable: { $edmJson: { $Path: 'in/canComplete' } }
+    @Common.SideEffects: { TargetProperties: ['in/status', 'in/statusCriticality'] };
+
+    close
+    @Core.OperationAvailable: { $edmJson: { $Path: 'in/canClose' } }
+    @Common.SideEffects: { TargetProperties: ['in/status', 'in/statusCriticality'] };
+
+    cancel
+    @Core.OperationAvailable: { $edmJson: { $Path: 'in/canCancel' } }
+    @Common.SideEffects: { TargetProperties: ['in/status', 'in/statusCriticality'] };
+
+    addPart
+    @Core.OperationAvailable: { $edmJson: { $Path: 'in/canAddItems' } }
+    @Common.SideEffects: { TargetEntities: [items], TargetProperties: [totalAmount] };
+
+    addWork
+    @Core.OperationAvailable: { $edmJson: { $Path: 'in/canAddItems' } }
+    @Common.SideEffects: { TargetEntities: [items], TargetProperties: [totalAmount] }
 };

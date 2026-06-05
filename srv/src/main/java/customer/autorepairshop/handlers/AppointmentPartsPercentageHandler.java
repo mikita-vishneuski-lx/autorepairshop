@@ -69,10 +69,10 @@ public class AppointmentPartsPercentageHandler implements EventHandler {
         BigDecimal parts = BigDecimal.ZERO;
 
         for (AppointmentsItems item : items) {
-            if (item.getPrice() == null || item.getQuantity() == null) {
+            BigDecimal lineTotal = ItemPricingHandler.lineTotal(item);
+            if (lineTotal.signum() == 0) {
                 continue;
             }
-            BigDecimal lineTotal = item.getPrice().multiply(item.getQuantity());
             total = total.add(lineTotal);
             if (PART_TYPE.equals(item.getType())) {
                 parts = parts.add(lineTotal);
