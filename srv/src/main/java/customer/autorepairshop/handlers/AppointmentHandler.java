@@ -1,35 +1,42 @@
 package customer.autorepairshop.handlers;
 
+import java.math.BigDecimal;
 import java.util.ArrayList;
-import java.util.HashSet;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.function.BiConsumer;
 import java.util.stream.Collectors;
 
-import cds.gen.com.sap.autorepair.ItemType;
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Component;
+
 import com.sap.cds.ql.Insert;
 import com.sap.cds.ql.Select;
 import com.sap.cds.ql.Update;
 import com.sap.cds.ql.cqn.AnalysisResult;
 import com.sap.cds.ql.cqn.CqnAnalyzer;
-import org.springframework.stereotype.Component;
-
+import com.sap.cds.ql.cqn.CqnInsert;
+import com.sap.cds.ql.cqn.CqnSelect;
+import com.sap.cds.ql.cqn.CqnStructuredTypeRef;
+import com.sap.cds.ql.cqn.CqnUpsert;
+import com.sap.cds.reflect.CdsModel;
 import com.sap.cds.services.ErrorStatuses;
+import com.sap.cds.services.EventContext;
 import com.sap.cds.services.ServiceException;
-import com.sap.cds.services.cds.CqnService;
+import com.sap.cds.services.draft.DraftSaveEventContext;
 import com.sap.cds.services.draft.DraftService;
 import com.sap.cds.services.handler.EventHandler;
+import com.sap.cds.services.handler.annotations.After;
 import com.sap.cds.services.handler.annotations.Before;
 import com.sap.cds.services.handler.annotations.On;
 import com.sap.cds.services.handler.annotations.ServiceName;
-import com.sap.cds.services.messages.Messages;
 import com.sap.cds.services.persistence.PersistenceService;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import com.sap.cds.services.request.UserInfo;
 
+import cds.gen.com.sap.autorepair.ItemType;
 import cds.gen.repairservice.Appointments;
 import cds.gen.repairservice.AppointmentsAddPartContext;
 import cds.gen.repairservice.AppointmentsAddWorkContext;
@@ -46,78 +53,91 @@ import cds.gen.repairservice.Appointments_;
 import cds.gen.repairservice.MasterLogs;
 import cds.gen.repairservice.MasterLogs_;
 import cds.gen.repairservice.RepairService_;
-import cds.gen.repairservice.Stocks;
-import cds.gen.repairservice.Stocks_;
 
 @Component
 @ServiceName(RepairService_.CDS_NAME)
 public class AppointmentHandler implements EventHandler {
 
-    private static final Logger log = LoggerFactory.getLogger(AppointmentHandler.class);
+    static final String STATUS_CREATED              = "Created";
+    static final String STATUS_INSPECTION           = "Inspection";
+    static final String STATUS_WAITING_FOR_APPROVAL = "Waiting for approval";
+    static final String STATUS_IN_PROGRESS          = "In Progress";
+    static final String STATUS_COMPLETED            = "Completed";
+    static final String STATUS_CLOSED               = "Closed";
+    static final String STATUS_CANCELLED            = "Cancelled";
+
+    static final String ITEM_PROPOSED = "Proposed";
+    static final String ITEM_APPROVED = "Approved";
+    static final String ITEM_REJECTED = "Rejected";
+
+    private static final Set<String> CANCELLABLE_STATES =
+            Set.of(STATUS_CREATED, STATUS_INSPECTION, STATUS_WAITING_FOR_APPROVAL);
 
     private final PersistenceService db;
-    private final Messages messages;
     private final DraftService draftService;
 
-    public AppointmentHandler(Messages messages, PersistenceService db,
+    public AppointmentHandler(PersistenceService db,
                               @Qualifier(RepairService_.CDS_NAME) DraftService draftService) {
         this.db = db;
-        this.messages = messages;
         this.draftService = draftService;
-    }
-
-    @Before(event = {CqnService.EVENT_CREATE, CqnService.EVENT_UPDATE}, entity = Appointments_.CDS_NAME)
-    public void validateStockOnParent(List<Appointments> appointments) {
-
-        if(appointments == null || appointments.isEmpty()) {
-            return;
-        }
-
-        var allItems = new ArrayList<AppointmentsItems>();
-
-        for (Appointments appointment : appointments) {
-            if (appointment.getItems() != null && !appointment.getItems().isEmpty()) {
-                allItems.addAll(appointment.getItems());
-            }
-        }
-
-        if (!allItems.isEmpty()) {
-            performStockValidation(allItems);
-        }
-    }
-
-    @Before(event = {CqnService.EVENT_CREATE, CqnService.EVENT_UPDATE}, entity = AppointmentsItems_.CDS_NAME)
-    public void validateStockOnChild(List<AppointmentsItems> appointmentsItems) {
-        if(appointmentsItems != null && !appointmentsItems.isEmpty()) {
-            performStockValidation(appointmentsItems);
-        }
     }
 
     @On(event = AppointmentsStartInspectionContext.CDS_NAME, entity = Appointments_.CDS_NAME)
     public void onStartInspection(AppointmentsStartInspectionContext context) {
-        requireAnyRole(context, "Manager");
-        boolean isActive = extractIsActive(context.getCqn(), context.getModel());
-        requireDraft(isActive);
-        String id = extractAppointmentId(context.getCqn(), context.getModel());
-        requireCurrentStatus(id, isActive, "Created",
-                "Inspection can only be started for newly created appointments");
-        context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
-            updateAppointmentStatus(id, isActive, "Inspection");
-        });
-        context.setResult(loadAppointment(id, isActive));
+        context.setResult(transition(context, context.getCqn(),
+                AppointmentSecurityHandler.ROLE_MANAGER,
+                STATUS_CREATED, STATUS_INSPECTION,
+                "Inspection can only be started for newly created appointments",
+                null));
         context.setCompleted();
     }
 
     @On(event = AppointmentsRequestApprovalContext.CDS_NAME, entity = Appointments_.CDS_NAME)
     public void onRequestApproval(AppointmentsRequestApprovalContext context) {
-        requireAnyRole(context, "Mechanic");
+        context.setResult(transition(context, context.getCqn(),
+                AppointmentSecurityHandler.ROLE_MECHANIC,
+                STATUS_INSPECTION, STATUS_WAITING_FOR_APPROVAL,
+                "Approval can only be requested while the appointment is under inspection",
+                null));
+        context.setCompleted();
+    }
+
+    @On(event = AppointmentsCompleteContext.CDS_NAME, entity = Appointments_.CDS_NAME)
+    public void onComplete(AppointmentsCompleteContext context) {
+        context.setResult(transition(context, context.getCqn(),
+                AppointmentSecurityHandler.ROLE_MECHANIC,
+                STATUS_IN_PROGRESS, STATUS_COMPLETED,
+                "Only in-progress appointments can be marked as completed",
+                (id, isActive) -> createWorkItemMasterLogs(id, isActive)));
+        context.setCompleted();
+    }
+
+    @On(event = AppointmentsCloseContext.CDS_NAME, entity = Appointments_.CDS_NAME)
+    public void onClose(AppointmentsCloseContext context) {
+        context.setResult(transition(context, context.getCqn(),
+                AppointmentSecurityHandler.ROLE_MECHANIC,
+                STATUS_COMPLETED, STATUS_CLOSED,
+                "Only completed appointments can be closed",
+                null));
+        context.setCompleted();
+    }
+
+    @On(event = AppointmentsCancelContext.CDS_NAME, entity = Appointments_.CDS_NAME)
+    public void onCancel(AppointmentsCancelContext context) {
+        requireAnyRole(context,
+                AppointmentSecurityHandler.ROLE_CLIENT,
+                AppointmentSecurityHandler.ROLE_MANAGER);
         boolean isActive = extractIsActive(context.getCqn(), context.getModel());
         requireDraft(isActive);
         String id = extractAppointmentId(context.getCqn(), context.getModel());
-        requireCurrentStatus(id, isActive, "Inspection",
-                "Approval can only be requested while the appointment is under inspection");
-        context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
-            updateAppointmentStatus(id, isActive, "Waiting for approval");
+        ensureClientOwnership(context, id);
+        String current = loadStatus(id, isActive);
+        if (current == null || !CANCELLABLE_STATES.contains(current)) {
+            throw badRequest("Appointment cannot be cancelled once work has started or finished");
+        }
+        runPrivileged(context, () -> {
+            updateAppointmentStatus(id, isActive, STATUS_CANCELLED);
+            rejectOpenPartItemsInDraft(id);
         });
         context.setResult(loadAppointment(id, isActive));
         context.setCompleted();
@@ -127,11 +147,9 @@ public class AppointmentHandler implements EventHandler {
     public void onAddPart(AppointmentsAddPartContext context) {
         String stockId = context.getStockItem();
         if (stockId == null || stockId.isBlank()) {
-            throw new ServiceException(ErrorStatuses.BAD_REQUEST, "Please pick a part.");
+            throw badRequest("Please pick a part.");
         }
-        int pos = addItemToDraft(context, stockId, null);
-        String id = extractAppointmentId(context.getCqn(), context.getModel());
-        context.setResult(loadDraftItem(id, pos));
+        context.setResult(addLineItem(context, stockId, null));
         context.setCompleted();
     }
 
@@ -139,241 +157,41 @@ public class AppointmentHandler implements EventHandler {
     public void onAddWork(AppointmentsAddWorkContext context) {
         String serviceId = context.getServicesOfferedItem();
         if (serviceId == null || serviceId.isBlank()) {
-            throw new ServiceException(ErrorStatuses.BAD_REQUEST, "Please pick a service.");
+            throw badRequest("Please pick a service.");
         }
-        int pos = addItemToDraft(context, null, serviceId);
-        String id = extractAppointmentId(context.getCqn(), context.getModel());
-        context.setResult(loadDraftItem(id, pos));
+        context.setResult(addLineItem(context, null, serviceId));
         context.setCompleted();
-    }
-
-    private AppointmentsItems loadDraftItem(String parentId, int pos) {
-        return draftService.run(Select.from(AppointmentsItems_.class)
-                        .where(i -> i.parent_ID().eq(parentId)
-                                .and(i.pos().eq(pos))
-                                .and(i.IsActiveEntity().eq(false))))
-                .first(AppointmentsItems.class)
-                .orElseThrow(() -> new ServiceException(ErrorStatuses.NOT_FOUND, "Item not found"));
-    }
-
-    private int addItemToDraft(com.sap.cds.services.EventContext context, String stockId, String serviceId) {
-        requireAnyRole(context, "Mechanic");
-        com.sap.cds.ql.cqn.CqnSelect cqn = (com.sap.cds.ql.cqn.CqnSelect) context.get("cqn");
-        boolean isActive = extractIsActive(cqn, context.getModel());
-        requireDraft(isActive);
-        String parentId = extractAppointmentId(cqn, context.getModel());
-        String status = loadCurrentStatusOn(parentId, isActive);
-        if (!"Inspection".equals(status) && !"In Progress".equals(status)) {
-            throw new ServiceException(ErrorStatuses.BAD_REQUEST,
-                    "Items can only be added while the appointment is under inspection or in progress");
-        }
-        int[] resultPos = new int[1];
-        context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
-            Integer existingPos = incrementExistingDraftItem(parentId, stockId, serviceId);
-            if (existingPos != null) {
-                resultPos[0] = existingPos;
-                return;
-            }
-            int nextPos = nextPosFor(parentId);
-            AppointmentsItems item = AppointmentsItems.create();
-            item.setParentId(parentId);
-            item.setPos(nextPos);
-            if (stockId != null) {
-                item.setStockItemId(stockId);
-            }
-            if (serviceId != null) {
-                item.setServicesOfferedItemId(serviceId);
-            }
-            draftService.newDraft(Insert.into(AppointmentsItems_.class).entry(item));
-            resultPos[0] = nextPos;
-        });
-        return resultPos[0];
-    }
-
-    private Integer incrementExistingDraftItem(String parentId, String stockId, String serviceId) {
-        var draftItems = draftService.run(Select.from(AppointmentsItems_.class)
-                        .where(i -> i.parent_ID().eq(parentId).and(i.IsActiveEntity().eq(false))))
-                .listOf(AppointmentsItems.class);
-        for (AppointmentsItems existing : draftItems) {
-            boolean match = (stockId != null && stockId.equals(existing.getStockItemId()))
-                    || (serviceId != null && serviceId.equals(existing.getServicesOfferedItemId()));
-            if (!match || existing.getPos() == null) {
-                continue;
-            }
-            final int pos = existing.getPos();
-            AppointmentsItems patch = AppointmentsItems.create();
-            if (stockId != null) {
-                java.math.BigDecimal current = existing.getQuantity() != null
-                        ? existing.getQuantity() : java.math.BigDecimal.ZERO;
-                patch.setQuantity(current.add(java.math.BigDecimal.ONE));
-            } else {
-                java.math.BigDecimal current = existing.getDuration() != null
-                        ? existing.getDuration() : java.math.BigDecimal.ZERO;
-                patch.setDuration(current.add(java.math.BigDecimal.ONE));
-            }
-            draftService.patchDraft(Update.entity(AppointmentsItems_.class)
-                    .data(patch)
-                    .where(i -> i.parent_ID().eq(parentId)
-                            .and(i.pos().eq(pos))
-                            .and(i.IsActiveEntity().eq(false))));
-            return pos;
-        }
-        return null;
     }
 
     @On(event = AppointmentsItemsApproveItemContext.CDS_NAME, entity = AppointmentsItems_.CDS_NAME)
     public void onApproveItem(AppointmentsItemsApproveItemContext context) {
-        requireAnyRole(context, "Client");
-        ItemKey key = extractItemKey(context.getCqn(), context.getModel());
-        requireDraft(key.isActive());
-        AppointmentsItems item = loadItem(key);
-        ensureClientOwnership(context, item.getParentId());
-        requireCurrentStatus(item.getParentId(), key.isActive(), "Waiting for approval",
-                "Items can only be decided while the appointment is waiting for approval");
-        requireItemStatus(item, "Proposed");
-        context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
-            updateItemStatus(key, "Approved");
-            recomputeAppointmentStatus(item.getParentId(), key.isActive());
-        });
-        context.setResult(reloadItem(key));
+        context.setResult(decideItem(context, context.getCqn(), ITEM_APPROVED));
         context.setCompleted();
     }
 
     @On(event = AppointmentsItemsRejectItemContext.CDS_NAME, entity = AppointmentsItems_.CDS_NAME)
     public void onRejectItem(AppointmentsItemsRejectItemContext context) {
-        requireAnyRole(context, "Client");
-        ItemKey key = extractItemKey(context.getCqn(), context.getModel());
-        requireDraft(key.isActive());
-        AppointmentsItems item = loadItem(key);
-        ensureClientOwnership(context, item.getParentId());
-        requireCurrentStatus(item.getParentId(), key.isActive(), "Waiting for approval",
-                "Items can only be decided while the appointment is waiting for approval");
-        requireItemStatus(item, "Proposed");
-        context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
-            updateItemStatus(key, "Rejected");
-            recomputeAppointmentStatus(item.getParentId(), key.isActive());
-        });
-        context.setResult(reloadItem(key));
+        context.setResult(decideItem(context, context.getCqn(), ITEM_REJECTED));
         context.setCompleted();
     }
 
-    @On(event = AppointmentsCompleteContext.CDS_NAME, entity = Appointments_.CDS_NAME)
-    public void onComplete(AppointmentsCompleteContext context) {
-        requireAnyRole(context, "Mechanic");
-        boolean isActive = extractIsActive(context.getCqn(), context.getModel());
-        requireDraft(isActive);
-        String id = extractAppointmentId(context.getCqn(), context.getModel());
-        requireCurrentStatus(id, isActive, "In Progress",
-                "Only in-progress appointments can be marked as completed");
-        context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
-            updateAppointmentStatus(id, isActive, "Completed");
-            createWorkItemMasterLogs(id, isActive);
-        });
-        context.setResult(loadAppointment(id, isActive));
-        context.setCompleted();
-    }
-
-    @On(event = AppointmentsCloseContext.CDS_NAME, entity = Appointments_.CDS_NAME)
-    public void onClose(AppointmentsCloseContext context) {
-        requireAnyRole(context, "Mechanic");
-        boolean isActive = extractIsActive(context.getCqn(), context.getModel());
-        requireDraft(isActive);
-        String id = extractAppointmentId(context.getCqn(), context.getModel());
-        requireCurrentStatus(id, isActive, "Completed",
-                "Only completed appointments can be closed");
-        context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
-            updateAppointmentStatus(id, isActive, "Closed");
-        });
-        context.setResult(loadAppointment(id, isActive));
-        context.setCompleted();
-    }
-
-    @On(event = AppointmentsCancelContext.CDS_NAME, entity = Appointments_.CDS_NAME)
-    public void onCancel(AppointmentsCancelContext context) {
-        requireAnyRole(context, "Client", "Manager");
-        boolean isActive = extractIsActive(context.getCqn(), context.getModel());
-        requireDraft(isActive);
-        String id = extractAppointmentId(context.getCqn(), context.getModel());
-        ensureClientOwnership(context, id);
-        Set<String> cancellable = Set.of("Created", "Inspection", "Waiting for approval");
-        String current = loadCurrentStatusOn(id, isActive);
-        if (!cancellable.contains(current)) {
-            throw new ServiceException(ErrorStatuses.BAD_REQUEST,
-                    "Appointment cannot be cancelled once work has started or finished");
-        }
-        context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
-            updateAppointmentStatus(id, isActive, "Cancelled");
-            rejectOpenPartItemsInDraft(id);
-        });
-        context.setResult(loadAppointment(id, isActive));
-        context.setCompleted();
-    }
-
-    private void rejectOpenPartItemsInDraft(String parentId) {
-        var draftItems = draftService.run(Select.from(AppointmentsItems_.class)
-                        .where(i -> i.parent_ID().eq(parentId).and(i.IsActiveEntity().eq(false))))
-                .listOf(AppointmentsItems.class);
-        for (AppointmentsItems it : draftItems) {
-            if (it.getPos() == null) {
-                continue;
-            }
-            if (!ItemType.PART.equals(it.getType())) {
-                continue;
-            }
-            if ("Rejected".equals(it.getItemStatus())) {
-                continue;
-            }
-            draftService.run(Update.entity(AppointmentsItems_.class)
-                    .data(AppointmentsItems.ITEM_STATUS, "Rejected")
-                    .where(a -> a.parent_ID().eq(parentId)
-                            .and(a.pos().eq(it.getPos()))
-                            .and(a.IsActiveEntity().eq(false))));
-        }
-    }
-
-    @com.sap.cds.services.handler.annotations.Before(event = DraftService.EVENT_DRAFT_SAVE, entity = Appointments_.CDS_NAME)
-    public void onBeforeDraftSave(com.sap.cds.services.draft.DraftSaveEventContext context) {
+    @Before(event = DraftService.EVENT_DRAFT_SAVE, entity = Appointments_.CDS_NAME)
+    public void onBeforeDraftSave(DraftSaveEventContext context) {
         String id;
         try {
             id = extractAppointmentId(context.getCqn(), context.getModel());
-        } catch (Exception ex) {
-            log.warn("DRAFT_SAVE: could not extract appointment id: {}", ex.getMessage());
+        } catch (ServiceException ex) {
             return;
         }
-        context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
-            String draftStatus = draftService.run(Select.from(Appointments_.class)
-                            .columns(a -> a.status())
-                            .where(a -> a.ID().eq(id).and(a.IsActiveEntity().eq(false))))
-                    .first(Appointments.class)
-                    .map(Appointments::getStatus)
-                    .orElse(null);
-            if (draftStatus != null) {
-                db.run(Update.entity(Appointments_.class)
-                        .data(Appointments.STATUS, draftStatus)
-                        .where(a -> a.ID().eq(id).and(a.IsActiveEntity().eq(true))));
-            }
-            var items = draftService.run(Select.from(AppointmentsItems_.class)
-                            .where(i -> i.parent_ID().eq(id).and(i.IsActiveEntity().eq(false))))
-                    .listOf(AppointmentsItems.class);
-            for (AppointmentsItems it : items) {
-                if (it.getItemStatus() == null || it.getPos() == null) {
-                    continue;
-                }
-                db.run(Update.entity(AppointmentsItems_.class)
-                        .data(AppointmentsItems.ITEM_STATUS, it.getItemStatus())
-                        .where(a -> a.parent_ID().eq(id)
-                                .and(a.pos().eq(it.getPos()))
-                                .and(a.IsActiveEntity().eq(true))));
-            }
-        });
+        runPrivileged(context, () -> propagateDraftStatusToActive(id));
     }
 
-    @com.sap.cds.services.handler.annotations.Before(event = DraftService.EVENT_DRAFT_NEW, entity = AppointmentsItems_.CDS_NAME)
-    public void assignItemPos(com.sap.cds.services.EventContext context, List<AppointmentsItems> items) {
+    @Before(event = DraftService.EVENT_DRAFT_NEW, entity = AppointmentsItems_.CDS_NAME)
+    public void assignItemPos(EventContext context, List<AppointmentsItems> items) {
         if (items == null || items.isEmpty()) {
             return;
         }
-        String contextParentId = resolveParentIdFromContext(context);
+        String contextParentId = parentIdFromContext(context);
         for (AppointmentsItems item : items) {
             if (Boolean.TRUE.equals(item.getHasActiveEntity())) {
                 continue;
@@ -385,55 +203,15 @@ public class AppointmentHandler implements EventHandler {
             if (parentId == null) {
                 continue;
             }
-            int nextPos = nextPosFor(parentId);
-            item.setPos(nextPos);
+            item.setPos(nextPosFor(parentId));
             if (item.getParentId() == null) {
                 item.setParentId(parentId);
             }
         }
     }
 
-    private int nextPosFor(String parentId) {
-        int maxActive = db.run(Select.from(AppointmentsItems_.class)
-                        .columns(i -> i.pos())
-                        .where(i -> i.parent_ID().eq(parentId)))
-                .listOf(AppointmentsItems.class).stream()
-                .map(AppointmentsItems::getPos)
-                .filter(Objects::nonNull)
-                .max(Integer::compareTo)
-                .orElse(0);
-        int maxDraft = draftService.run(Select.from(AppointmentsItems_.class)
-                        .columns(i -> i.pos())
-                        .where(i -> i.parent_ID().eq(parentId).and(i.IsActiveEntity().eq(false))))
-                .listOf(AppointmentsItems.class).stream()
-                .map(AppointmentsItems::getPos)
-                .filter(Objects::nonNull)
-                .max(Integer::compareTo)
-                .orElse(0);
-        return Math.max(maxActive, maxDraft) + 10;
-    }
-
-    private static String resolveParentIdFromContext(com.sap.cds.services.EventContext context) {
-        Object cqn = context.get("cqn");
-        com.sap.cds.ql.cqn.CqnStructuredTypeRef ref = null;
-        if (cqn instanceof com.sap.cds.ql.cqn.CqnInsert insert) {
-            ref = insert.ref();
-        } else if (cqn instanceof com.sap.cds.ql.cqn.CqnUpsert upsert) {
-            ref = upsert.ref();
-        }
-        if (ref == null) {
-            return null;
-        }
-        AnalysisResult analysis = CqnAnalyzer.create(context.getModel()).analyze(ref);
-        Object id = analysis.targetKeys().get("parent_ID");
-        if (id == null) {
-            id = analysis.rootKeys().get("ID");
-        }
-        return id == null ? null : id.toString();
-    }
-
-    @com.sap.cds.services.handler.annotations.After(event = DraftService.EVENT_DRAFT_NEW, entity = AppointmentsItems_.CDS_NAME)
-    public void onItemDraftNew(com.sap.cds.services.EventContext context, List<AppointmentsItems> items) {
+    @After(event = DraftService.EVENT_DRAFT_NEW, entity = AppointmentsItems_.CDS_NAME)
+    public void onItemDraftNew(EventContext context, List<AppointmentsItems> items) {
         if (items == null || items.isEmpty()) {
             return;
         }
@@ -441,41 +219,190 @@ public class AppointmentHandler implements EventHandler {
                 .map(AppointmentsItems::getParentId)
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
-        if (parentIds.isEmpty()) {
-            return;
-        }
         for (String parentId : parentIds) {
-            String parentStatus = draftService.run(Select.from(Appointments_.class)
-                            .columns(a -> a.status())
-                            .where(a -> a.ID().eq(parentId).and(a.IsActiveEntity().eq(false))))
-                    .first(Appointments.class)
-                    .map(Appointments::getStatus)
-                    .orElse(null);
-            if ("In Progress".equals(parentStatus)) {
-                final String pid = parentId;
-                context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
-                    draftService.patchDraft(Update.entity(Appointments_.class)
-                            .data(Appointments.STATUS, "Waiting for approval")
-                            .where(a -> a.ID().eq(pid).and(a.IsActiveEntity().eq(false))));
-                });
+            if (!STATUS_IN_PROGRESS.equals(loadDraftStatus(parentId))) {
+                continue;
             }
+            runPrivileged(context, () -> draftService.patchDraft(Update.entity(Appointments_.class)
+                    .data(Appointments.STATUS, STATUS_WAITING_FOR_APPROVAL)
+                    .where(a -> a.ID().eq(parentId).and(a.IsActiveEntity().eq(false)))));
         }
     }
 
-    private void requireAnyRole(com.sap.cds.services.EventContext context, String... roles) {
-        com.sap.cds.services.request.UserInfo user = context.getUserInfo();
+    private Appointments transition(EventContext context, CqnSelect cqn,
+                                    String requiredRole, String fromStatus, String toStatus,
+                                    String wrongStatusMsg, BiConsumer<String, Boolean> postAction) {
+        requireAnyRole(context, requiredRole);
+        boolean isActive = extractIsActive(cqn, context.getModel());
+        requireDraft(isActive);
+        String id = extractAppointmentId(cqn, context.getModel());
+        if (!fromStatus.equals(loadStatus(id, isActive))) {
+            throw badRequest(wrongStatusMsg);
+        }
+        runPrivileged(context, () -> {
+            updateAppointmentStatus(id, isActive, toStatus);
+            if (postAction != null) {
+                postAction.accept(id, isActive);
+            }
+        });
+        return loadAppointment(id, isActive);
+    }
+
+    private AppointmentsItems decideItem(EventContext context, CqnSelect cqn, String newStatus) {
+        requireAnyRole(context, AppointmentSecurityHandler.ROLE_CLIENT);
+        ItemKey key = extractItemKey(cqn, context.getModel());
+        requireDraft(key.isActive());
+        AppointmentsItems item = loadItem(key);
+        ensureClientOwnership(context, item.getParentId());
+        if (!STATUS_WAITING_FOR_APPROVAL.equals(loadStatus(item.getParentId(), key.isActive()))) {
+            throw badRequest("Items can only be decided while the appointment is waiting for approval");
+        }
+        if (!ITEM_PROPOSED.equals(item.getItemStatus())) {
+            throw badRequest("Item has already been decided (current: '" + item.getItemStatus() + "')");
+        }
+        runPrivileged(context, () -> {
+            updateItemStatus(key, newStatus);
+            recomputeAppointmentStatus(item.getParentId(), key.isActive());
+        });
+        return loadItem(key);
+    }
+
+    private AppointmentsItems addLineItem(EventContext context, String stockId, String serviceId) {
+        requireAnyRole(context, AppointmentSecurityHandler.ROLE_MECHANIC);
+        CqnSelect cqn = (CqnSelect) context.get("cqn");
+        boolean isActive = extractIsActive(cqn, context.getModel());
+        requireDraft(isActive);
+        String parentId = extractAppointmentId(cqn, context.getModel());
+        String status = loadStatus(parentId, isActive);
+        if (!STATUS_INSPECTION.equals(status) && !STATUS_IN_PROGRESS.equals(status)) {
+            throw badRequest("Items can only be added while the appointment is under inspection or in progress");
+        }
+        int[] pos = new int[1];
+        runPrivileged(context, () -> {
+            Integer existing = incrementExistingDraftItem(parentId, stockId, serviceId);
+            pos[0] = existing != null ? existing : insertNewDraftItem(parentId, stockId, serviceId);
+        });
+        return loadDraftItem(parentId, pos[0]);
+    }
+
+    private int insertNewDraftItem(String parentId, String stockId, String serviceId) {
+        int nextPos = nextPosFor(parentId);
+        AppointmentsItems item = AppointmentsItems.create();
+        item.setParentId(parentId);
+        item.setPos(nextPos);
+        if (stockId != null) {
+            item.setStockItemId(stockId);
+        }
+        if (serviceId != null) {
+            item.setServicesOfferedItemId(serviceId);
+        }
+        draftService.newDraft(Insert.into(AppointmentsItems_.class).entry(item));
+        return nextPos;
+    }
+
+    private Integer incrementExistingDraftItem(String parentId, String stockId, String serviceId) {
+        List<AppointmentsItems> draftItems = draftService.run(Select.from(AppointmentsItems_.class)
+                        .where(i -> i.parent_ID().eq(parentId).and(i.IsActiveEntity().eq(false))))
+                .listOf(AppointmentsItems.class);
+        for (AppointmentsItems existing : draftItems) {
+            boolean match = (stockId != null && stockId.equals(existing.getStockItemId()))
+                    || (serviceId != null && serviceId.equals(existing.getServicesOfferedItemId()));
+            if (!match || existing.getPos() == null) {
+                continue;
+            }
+            final int pos = existing.getPos();
+            AppointmentsItems patch = AppointmentsItems.create();
+            if (stockId != null) {
+                patch.setQuantity(orZero(existing.getQuantity()).add(BigDecimal.ONE));
+            } else {
+                patch.setDuration(orZero(existing.getDuration()).add(BigDecimal.ONE));
+            }
+            draftService.patchDraft(Update.entity(AppointmentsItems_.class)
+                    .data(patch)
+                    .where(i -> i.parent_ID().eq(parentId)
+                            .and(i.pos().eq(pos))
+                            .and(i.IsActiveEntity().eq(false))));
+            return pos;
+        }
+        return null;
+    }
+
+    private void rejectOpenPartItemsInDraft(String parentId) {
+        List<AppointmentsItems> draftItems = draftService.run(Select.from(AppointmentsItems_.class)
+                        .where(i -> i.parent_ID().eq(parentId).and(i.IsActiveEntity().eq(false))))
+                .listOf(AppointmentsItems.class);
+        for (AppointmentsItems it : draftItems) {
+            if (it.getPos() == null
+                    || !ItemType.PART.equals(it.getType())
+                    || ITEM_REJECTED.equals(it.getItemStatus())) {
+                continue;
+            }
+            draftService.run(Update.entity(AppointmentsItems_.class)
+                    .data(AppointmentsItems.ITEM_STATUS, ITEM_REJECTED)
+                    .where(a -> a.parent_ID().eq(parentId)
+                            .and(a.pos().eq(it.getPos()))
+                            .and(a.IsActiveEntity().eq(false))));
+        }
+    }
+
+    private void propagateDraftStatusToActive(String id) {
+        String draftStatus = loadDraftStatus(id);
+        if (draftStatus != null) {
+            db.run(Update.entity(Appointments_.class)
+                    .data(Appointments.STATUS, draftStatus)
+                    .where(a -> a.ID().eq(id).and(a.IsActiveEntity().eq(true))));
+        }
+        List<AppointmentsItems> items = draftService.run(Select.from(AppointmentsItems_.class)
+                        .where(i -> i.parent_ID().eq(id).and(i.IsActiveEntity().eq(false))))
+                .listOf(AppointmentsItems.class);
+        for (AppointmentsItems it : items) {
+            if (it.getItemStatus() == null || it.getPos() == null) {
+                continue;
+            }
+            db.run(Update.entity(AppointmentsItems_.class)
+                    .data(AppointmentsItems.ITEM_STATUS, it.getItemStatus())
+                    .where(a -> a.parent_ID().eq(id)
+                            .and(a.pos().eq(it.getPos()))
+                            .and(a.IsActiveEntity().eq(true))));
+        }
+    }
+
+    private int nextPosFor(String parentId) {
+        int maxActive = maxPos(db.run(Select.from(AppointmentsItems_.class)
+                        .columns(i -> i.pos())
+                        .where(i -> i.parent_ID().eq(parentId)))
+                .listOf(AppointmentsItems.class));
+        int maxDraft = maxPos(draftService.run(Select.from(AppointmentsItems_.class)
+                        .columns(i -> i.pos())
+                        .where(i -> i.parent_ID().eq(parentId).and(i.IsActiveEntity().eq(false))))
+                .listOf(AppointmentsItems.class));
+        return Math.max(maxActive, maxDraft) + 10;
+    }
+
+    private static int maxPos(List<AppointmentsItems> items) {
+        return items.stream()
+                .map(AppointmentsItems::getPos)
+                .filter(Objects::nonNull)
+                .max(Integer::compareTo)
+                .orElse(0);
+    }
+
+    private void requireAnyRole(EventContext context, String... roles) {
+        UserInfo user = context.getUserInfo();
         for (String role : roles) {
             if (user.hasRole(role)) {
                 return;
             }
         }
         throw new ServiceException(ErrorStatuses.FORBIDDEN,
-                "This action requires one of the roles: " + java.util.Arrays.toString(roles));
+                "This action requires one of the roles: " + Arrays.toString(roles));
     }
 
-    private void ensureClientOwnership(com.sap.cds.services.EventContext context, String id) {
-        com.sap.cds.services.request.UserInfo user = context.getUserInfo();
-        if (!user.hasRole("Client") || user.hasRole("Manager") || user.hasRole("Mechanic")) {
+    private void ensureClientOwnership(EventContext context, String id) {
+        UserInfo user = context.getUserInfo();
+        if (!user.hasRole(AppointmentSecurityHandler.ROLE_CLIENT)
+                || user.hasRole(AppointmentSecurityHandler.ROLE_MANAGER)
+                || user.hasRole(AppointmentSecurityHandler.ROLE_MECHANIC)) {
             return;
         }
         String owner = db.run(Select.from(Appointments_.class)
@@ -490,71 +417,74 @@ public class AppointmentHandler implements EventHandler {
         }
     }
 
-    private String extractAppointmentId(com.sap.cds.ql.cqn.CqnSelect cqn, com.sap.cds.reflect.CdsModel model) {
-        AnalysisResult analysis = CqnAnalyzer.create(model).analyze(cqn);
-        Object idValue = analysis.targetKeys().get(Appointments.ID);
-        if (idValue == null) {
-            throw new ServiceException(ErrorStatuses.BAD_REQUEST,
-                    "Unable to determine appointment ID for status action");
+    private void requireDraft(boolean isActive) {
+        if (isActive) {
+            throw badRequest("This action can only be invoked on a draft. Please open the appointment in Edit mode first.");
         }
-        return String.valueOf(idValue);
     }
 
-    private boolean extractIsActive(com.sap.cds.ql.cqn.CqnSelect cqn, com.sap.cds.reflect.CdsModel model) {
-        AnalysisResult analysis = CqnAnalyzer.create(model).analyze(cqn);
-        Object v = analysis.targetKeys().get(Appointments.IS_ACTIVE_ENTITY);
+    private String extractAppointmentId(CqnSelect cqn, CdsModel model) {
+        Object id = CqnAnalyzer.create(model).analyze(cqn).targetKeys().get(Appointments.ID);
+        if (id == null) {
+            throw badRequest("Unable to determine appointment ID for status action");
+        }
+        return String.valueOf(id);
+    }
+
+    private boolean extractIsActive(CqnSelect cqn, CdsModel model) {
+        Object v = CqnAnalyzer.create(model).analyze(cqn).targetKeys().get(Appointments.IS_ACTIVE_ENTITY);
         return v == null || Boolean.parseBoolean(String.valueOf(v));
     }
 
-    private void requireDraft(boolean isActive) {
-        if (isActive) {
-            throw new ServiceException(ErrorStatuses.BAD_REQUEST,
-                    "This action can only be invoked on a draft. Please open the appointment in Edit mode first.");
-        }
-    }
-
-    private record ItemKey(String parentId, Integer pos, boolean isActive) {}
-
-    private ItemKey extractItemKey(com.sap.cds.ql.cqn.CqnSelect cqn, com.sap.cds.reflect.CdsModel model) {
-        AnalysisResult analysis = CqnAnalyzer.create(model).analyze(cqn);
-        Map<String, Object> keys = analysis.targetKeys();
+    private ItemKey extractItemKey(CqnSelect cqn, CdsModel model) {
+        Map<String, Object> keys = CqnAnalyzer.create(model).analyze(cqn).targetKeys();
         Object parentId = keys.get(AppointmentsItems.PARENT_ID);
         Object pos = keys.get(AppointmentsItems.POS);
         Object isActive = keys.get(AppointmentsItems.IS_ACTIVE_ENTITY);
         if (parentId == null || pos == null) {
-            throw new ServiceException(ErrorStatuses.BAD_REQUEST, "Unable to determine item key");
+            throw badRequest("Unable to determine item key");
         }
-        return new ItemKey(
-                String.valueOf(parentId),
+        return new ItemKey(String.valueOf(parentId),
                 Integer.valueOf(String.valueOf(pos)),
                 isActive == null || Boolean.parseBoolean(String.valueOf(isActive)));
     }
 
+    private static String parentIdFromContext(EventContext context) {
+        Object cqn = context.get("cqn");
+        CqnStructuredTypeRef ref = null;
+        if (cqn instanceof CqnInsert insert) {
+            ref = insert.ref();
+        } else if (cqn instanceof CqnUpsert upsert) {
+            ref = upsert.ref();
+        }
+        if (ref == null) {
+            return null;
+        }
+        AnalysisResult analysis = CqnAnalyzer.create(context.getModel()).analyze(ref);
+        Object id = analysis.targetKeys().get("parent_ID");
+        if (id == null) {
+            id = analysis.rootKeys().get("ID");
+        }
+        return id == null ? null : id.toString();
+    }
+
     private AppointmentsItems loadItem(ItemKey key) {
-        var select = Select.from(AppointmentsItems_.class)
-                .where(i -> i.parent_ID().eq(key.parentId())
-                        .and(i.pos().eq(key.pos()))
-                        .and(i.IsActiveEntity().eq(key.isActive())));
         var service = key.isActive() ? db : draftService;
-        return service.run(select)
+        return service.run(Select.from(AppointmentsItems_.class)
+                        .where(i -> i.parent_ID().eq(key.parentId())
+                                .and(i.pos().eq(key.pos()))
+                                .and(i.IsActiveEntity().eq(key.isActive()))))
                 .first(AppointmentsItems.class)
                 .orElseThrow(() -> new ServiceException(ErrorStatuses.NOT_FOUND, "Item not found"));
     }
 
-    private AppointmentsItems reloadItem(ItemKey key) {
-        var select = Select.from(AppointmentsItems_.class)
-                .where(i -> i.parent_ID().eq(key.parentId())
-                        .and(i.pos().eq(key.pos()))
-                        .and(i.IsActiveEntity().eq(key.isActive())));
-        var service = key.isActive() ? db : draftService;
-        return service.run(select).single(AppointmentsItems.class);
-    }
-
-    private void requireItemStatus(AppointmentsItems item, String expected) {
-        if (!expected.equals(item.getItemStatus())) {
-            throw new ServiceException(ErrorStatuses.BAD_REQUEST,
-                    "Item has already been decided (current: '" + item.getItemStatus() + "')");
-        }
+    private AppointmentsItems loadDraftItem(String parentId, int pos) {
+        return draftService.run(Select.from(AppointmentsItems_.class)
+                        .where(i -> i.parent_ID().eq(parentId)
+                                .and(i.pos().eq(pos))
+                                .and(i.IsActiveEntity().eq(false))))
+                .first(AppointmentsItems.class)
+                .orElseThrow(() -> new ServiceException(ErrorStatuses.NOT_FOUND, "Item not found"));
     }
 
     private void updateItemStatus(ItemKey key, String newStatus) {
@@ -572,19 +502,18 @@ public class AppointmentHandler implements EventHandler {
 
     private void recomputeAppointmentStatus(String appointmentId, boolean isActive) {
         var service = isActive ? db : draftService;
-        var items = service.run(Select.from(AppointmentsItems_.class)
+        List<AppointmentsItems> items = service.run(Select.from(AppointmentsItems_.class)
                         .where(i -> i.parent_ID().eq(appointmentId)
                                 .and(i.IsActiveEntity().eq(isActive))))
                 .listOf(AppointmentsItems.class);
         if (items.isEmpty()) {
             return;
         }
-        boolean anyProposed = items.stream().anyMatch(i -> "Proposed".equals(i.getItemStatus()));
-        if (anyProposed) {
+        if (items.stream().anyMatch(i -> ITEM_PROPOSED.equals(i.getItemStatus()))) {
             return;
         }
-        boolean anyApproved = items.stream().anyMatch(i -> "Approved".equals(i.getItemStatus()));
-        updateAppointmentStatus(appointmentId, isActive, anyApproved ? "In Progress" : "Cancelled");
+        boolean anyApproved = items.stream().anyMatch(i -> ITEM_APPROVED.equals(i.getItemStatus()));
+        updateAppointmentStatus(appointmentId, isActive, anyApproved ? STATUS_IN_PROGRESS : STATUS_CANCELLED);
     }
 
     private void updateAppointmentStatus(String id, boolean isActive, String newStatus) {
@@ -598,28 +527,23 @@ public class AppointmentHandler implements EventHandler {
         }
     }
 
-    private void requireCurrentStatus(String id, boolean isActive, String expected, String message) {
-        var service = isActive ? db : draftService;
-        String current = service.run(Select.from(Appointments_.class)
-                        .columns(a -> a.status())
-                        .where(a -> a.ID().eq(id).and(a.IsActiveEntity().eq(isActive))))
-                .first(Appointments.class)
-                .map(Appointments::getStatus)
-                .orElseThrow(() -> new ServiceException(ErrorStatuses.NOT_FOUND, "Appointment not found"));
-        if (!expected.equals(current)) {
-            throw new ServiceException(ErrorStatuses.BAD_REQUEST, message);
-        }
-    }
-
-    private String loadCurrentStatusOn(String id, boolean isActive) {
+    private String loadStatus(String id, boolean isActive) {
         var service = isActive ? db : draftService;
         return service.run(Select.from(Appointments_.class)
                         .columns(a -> a.status())
                         .where(a -> a.ID().eq(id).and(a.IsActiveEntity().eq(isActive))))
                 .first(Appointments.class)
                 .map(Appointments::getStatus)
-                .orElseThrow(() -> new ServiceException(ErrorStatuses.NOT_FOUND,
-                        "Appointment not found: " + id));
+                .orElseThrow(() -> new ServiceException(ErrorStatuses.NOT_FOUND, "Appointment not found: " + id));
+    }
+
+    private String loadDraftStatus(String parentId) {
+        return draftService.run(Select.from(Appointments_.class)
+                        .columns(a -> a.status())
+                        .where(a -> a.ID().eq(parentId).and(a.IsActiveEntity().eq(false))))
+                .first(Appointments.class)
+                .map(Appointments::getStatus)
+                .orElse(null);
     }
 
     private Appointments loadAppointment(String id, boolean isActive) {
@@ -630,20 +554,19 @@ public class AppointmentHandler implements EventHandler {
     }
 
     private void createWorkItemMasterLogs(String appointmentId, boolean isActive) {
-        var workItems = loadAppointmentItemsById(appointmentId, isActive).stream()
-                .filter(item -> ItemType.WORK.equals(item.getType()))
+        var service = isActive ? db : draftService;
+        List<AppointmentsItems> workItems = service.run(Select.from(AppointmentsItems_.class)
+                        .where(i -> i.parent_ID().eq(appointmentId).and(i.IsActiveEntity().eq(isActive))))
+                .listOf(AppointmentsItems.class).stream()
+                .filter(i -> ItemType.WORK.equals(i.getType()))
                 .toList();
-
         if (workItems.isEmpty()) {
             return;
         }
-
-        var appointment = loadAppointment(appointmentId, isActive);
-        var appointmentNo = appointment.getAppointmentNo();
-
-        var logs = new ArrayList<MasterLogs>();
-        for (var item : workItems) {
-            var log = MasterLogs.create();
+        String appointmentNo = loadAppointment(appointmentId, isActive).getAppointmentNo();
+        List<MasterLogs> logs = new ArrayList<>();
+        for (AppointmentsItems item : workItems) {
+            MasterLogs log = MasterLogs.create();
             log.setAppointmentId(appointmentId);
             log.setAppointmentNo(appointmentNo);
             log.setWorkDescription(item.getDescription());
@@ -653,64 +576,22 @@ public class AppointmentHandler implements EventHandler {
             log.setCreatedFromPos(item.getPos());
             logs.add(log);
         }
-
         db.run(Insert.into(MasterLogs_.class).entries(logs));
     }
 
-    private void performStockValidation(List<AppointmentsItems> items) {
-        validatePartsAgainstStock(items, false);
+    private static void runPrivileged(EventContext context, Runnable action) {
+        context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
+            action.run();
+        });
     }
 
-    private List<AppointmentsItems> loadAppointmentItemsById(String appointmentId, boolean isActive) {
-        if (appointmentId == null) {
-            throw new ServiceException(ErrorStatuses.BAD_REQUEST, "Appointment ID is required");
-        }
-
-        var service = isActive ? db : draftService;
-        return service.run(Select.from(AppointmentsItems_.class)
-                .where(item -> item.parent_ID().eq(appointmentId)
-                        .and(item.IsActiveEntity().eq(isActive))))
-                .listOf(AppointmentsItems.class);
+    private static BigDecimal orZero(BigDecimal v) {
+        return v == null ? BigDecimal.ZERO : v;
     }
 
-    private void validatePartsAgainstStock(List<AppointmentsItems> items, boolean failOnInsufficientStock) {
-        var stockItemsIds = new HashSet<String>();
-
-        items.stream()
-             .map(AppointmentsItems::getStockItemId)
-             .filter(Objects::nonNull)
-             .forEach(stockItemsIds::add);
-
-        if (stockItemsIds.isEmpty()) {
-            return;
-        }
-
-        List<Stocks> stocksFromDb = db.run(Select.from(Stocks_.class)
-                                      .where(s -> s.ID().in(stockItemsIds)))
-                                      .listOf(Stocks.class);
-
-        Map<String, Stocks> stockMap = stocksFromDb.stream()
-                .collect(Collectors.toMap(Stocks::getId, s -> s));
-
-        for (AppointmentsItems item : items) {
-            if (item.getStockItemId() == null || item.getQuantity() == null) {
-                continue;
-            }
-
-            var stock = stockMap.get(item.getStockItemId());
-
-            if (stock == null) {
-                throw new ServiceException(ErrorStatuses.NOT_FOUND, "No part on stock! " + item.getStockItemId());
-            }
-
-            if (stock.getQuantity().compareTo(item.getQuantity()) < 0) {
-                if (failOnInsufficientStock) {
-                    throw new ServiceException(ErrorStatuses.BAD_REQUEST,
-                            "The request cannot be approved until the warehouse confirms critical spare parts availability");
-                }
-
-                messages.warn("There may be a delay. Not enough stock for: " + stock.getName());
-            }
-        }
+    private static ServiceException badRequest(String message) {
+        return new ServiceException(ErrorStatuses.BAD_REQUEST, message);
     }
+
+    private record ItemKey(String parentId, Integer pos, boolean isActive) {}
 }

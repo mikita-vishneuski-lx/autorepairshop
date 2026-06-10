@@ -195,10 +195,6 @@ public class SecurityIT {
                 .andExpect(status().isForbidden());
     }
 
-    // ========================================================================
-    // Stocks security: Client = no access, Mechanic = READ only, Manager = CRU
-    // ========================================================================
-
     @Test
     @WithMockUser(username = "client1", roles = "Client")
     public void clientCannotReadStocks() throws Exception {
@@ -283,10 +279,6 @@ public class SecurityIT {
                 .andDo(print())
                 .andExpect(status().isForbidden());
     }
-
-    // ================================================================================
-    // ServicesOffered security: Client = no access, Mechanic = READ only, Manager = CRU
-    // ================================================================================
 
     @Test
     @WithMockUser(username = "client1", roles = "Client")

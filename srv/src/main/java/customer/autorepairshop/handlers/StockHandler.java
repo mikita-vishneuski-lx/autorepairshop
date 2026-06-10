@@ -44,57 +44,44 @@ public class StockHandler implements EventHandler {
             if (stock == null) {
                 continue;
             }
-            boolean originalTouched = stock.containsKey(Stocks.ORIGINAL_ID)
-                                      || stock.containsKey("original");
+            boolean originalTouched = stock.containsKey(Stocks.ORIGINAL_ID) || stock.containsKey("original");
             if (!originalTouched && !stock.containsKey(Stocks.TYPE)) {
                 continue;
             }
-            String derived = stock.getOriginalId() != null ? TYPE_ANALOG : TYPE_ORIGINAL;
-            stock.setType(derived);
+            stock.setType(stock.getOriginalId() != null ? TYPE_ANALOG : TYPE_ORIGINAL);
         }
     }
 
     @On(entity = Stocks_.CDS_NAME)
-    public void onGetAvailableSustitutes(StocksGetAvailableSubstitutesContext context) {
-
-        CqnSelect selectOriginalPart = context.getCqn();
-
-        Stocks selectedPart = db.run(selectOriginalPart).first(Stocks.class).orElse(null);
-
+    public void onGetAvailableSubstitutes(StocksGetAvailableSubstitutesContext context) {
+        Stocks selectedPart = db.run(context.getCqn()).first(Stocks.class).orElse(null);
         if (selectedPart == null || selectedPart.getType() == null) {
             context.setResult(List.of());
             return;
         }
-
-        CqnSelect findSubstitutesQuery;
-
-        if (TYPE_ORIGINAL.equals(selectedPart.getType())) {
-            findSubstitutesQuery = Select.from(Stocks_.class)
-                                        .where(s -> s.type().eq(TYPE_ANALOG)
-                                            .and(s.original_ID().eq(selectedPart.getId()))
-                                            .and(s.quantity().gt(BigDecimal.ZERO)));
-        }
-
-        else if (TYPE_ANALOG.equals(selectedPart.getType()) && selectedPart.getOriginalId() != null) {
-             String baseOriginalId = selectedPart.getOriginalId();
-
-             findSubstitutesQuery = Select.from(Stocks_.class)
-                                        .where(s -> s.quantity().gt(BigDecimal.ZERO)
-                                            .and(
-                                                s.ID().eq(baseOriginalId)
-                                                .or(
-                                                    s.original_ID().eq(baseOriginalId)
-                                                        .and(s.ID().ne(selectedPart.getId()))
-                                                )
-                                            ));
-        } else {
+        CqnSelect query = buildSubstitutesQuery(selectedPart);
+        if (query == null) {
             context.setResult(List.of());
             return;
         }
+        context.setResult(db.run(query).listOf(Stocks.class));
+    }
 
-        List<Stocks> availableSubstitutes = db.run(findSubstitutesQuery).listOf(Stocks.class);
-
-        context.setResult(availableSubstitutes);
+    private static CqnSelect buildSubstitutesQuery(Stocks part) {
+        if (TYPE_ORIGINAL.equals(part.getType())) {
+            return Select.from(Stocks_.class)
+                    .where(s -> s.type().eq(TYPE_ANALOG)
+                            .and(s.original_ID().eq(part.getId()))
+                            .and(s.quantity().gt(BigDecimal.ZERO)));
+        }
+        if (TYPE_ANALOG.equals(part.getType()) && part.getOriginalId() != null) {
+            String baseOriginalId = part.getOriginalId();
+            return Select.from(Stocks_.class)
+                    .where(s -> s.quantity().gt(BigDecimal.ZERO)
+                            .and(s.ID().eq(baseOriginalId)
+                                    .or(s.original_ID().eq(baseOriginalId)
+                                            .and(s.ID().ne(part.getId())))));
+        }
+        return null;
     }
 }
-

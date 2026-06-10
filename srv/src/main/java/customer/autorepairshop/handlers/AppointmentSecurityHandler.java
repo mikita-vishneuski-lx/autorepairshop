@@ -10,7 +10,14 @@ import java.util.stream.Collectors;
 import org.springframework.stereotype.Component;
 
 import com.sap.cds.ql.Select;
+import com.sap.cds.ql.cqn.AnalysisResult;
+import com.sap.cds.ql.cqn.CqnAnalyzer;
+import com.sap.cds.ql.cqn.CqnDelete;
+import com.sap.cds.ql.cqn.CqnInsert;
+import com.sap.cds.ql.cqn.CqnStructuredTypeRef;
+import com.sap.cds.ql.cqn.CqnUpsert;
 import com.sap.cds.services.ErrorStatuses;
+import com.sap.cds.services.EventContext;
 import com.sap.cds.services.ServiceException;
 import com.sap.cds.services.cds.CqnService;
 import com.sap.cds.services.draft.DraftService;
@@ -38,8 +45,7 @@ public class AppointmentSecurityHandler implements EventHandler {
 
     static final String FIELD_CONFIRMED_BY_CLIENT = "confirmedByClient";
 
-    private static final Set<String> CLIENT_WRITABLE_ITEM = Set.of(
-            FIELD_CONFIRMED_BY_CLIENT);
+    private static final Set<String> CLIENT_WRITABLE_ITEM = Set.of(FIELD_CONFIRMED_BY_CLIENT);
 
     private static final Set<String> MECHANIC_WRITABLE_ITEM = Set.of(
             AppointmentsItems.QUANTITY,
@@ -48,12 +54,12 @@ public class AppointmentSecurityHandler implements EventHandler {
             AppointmentsItems.SERVICES_OFFERED_ITEM_ID);
 
     private static final Set<String> CANCELLABLE_STATES = Set.of(
-            "Created",
-            "Inspection",
-            "Waiting for approval");
+            AppointmentHandler.STATUS_CREATED,
+            AppointmentHandler.STATUS_INSPECTION,
+            AppointmentHandler.STATUS_WAITING_FOR_APPROVAL);
 
-    private static final Set<String> CLIENT_CONFIRM_EDITABLE_STATES = Set.of(
-            "Waiting for approval");
+    private static final Set<String> CLIENT_CONFIRM_EDITABLE_STATES =
+            Set.of(AppointmentHandler.STATUS_WAITING_FOR_APPROVAL);
 
     private static final Set<String> TECHNICAL_FIELDS = Set.of(
             "ID", "parent", "parent_ID", "pos",
@@ -86,17 +92,18 @@ public class AppointmentSecurityHandler implements EventHandler {
         for (Appointments row : rows) {
             String status = row.getStatus();
             boolean isDraft = Boolean.FALSE.equals(row.getIsActiveEntity());
-            boolean headerEditable = isClient && "Created".equals(status);
+            boolean headerEditable = isClient && AppointmentHandler.STATUS_CREATED.equals(status);
             row.put("headerFieldControl", headerEditable ? FC_EDITABLE : FC_READ_ONLY);
 
-            row.put("canApplyStandardMaintenance", isMechanic && isDraft && "Inspection".equals(status));
-            row.put("canStartInspection",          isManager  && isDraft && "Created".equals(status));
-            row.put("canRequestApproval",          isMechanic && isDraft && "Inspection".equals(status));
-            row.put("canComplete",                 isMechanic && isDraft && "In Progress".equals(status));
-            row.put("canClose",                    isMechanic && isDraft && "Completed".equals(status));
+            row.put("canApplyStandardMaintenance", isMechanic && isDraft && AppointmentHandler.STATUS_INSPECTION.equals(status));
+            row.put("canStartInspection",          isManager  && isDraft && AppointmentHandler.STATUS_CREATED.equals(status));
+            row.put("canRequestApproval",          isMechanic && isDraft && AppointmentHandler.STATUS_INSPECTION.equals(status));
+            row.put("canComplete",                 isMechanic && isDraft && AppointmentHandler.STATUS_IN_PROGRESS.equals(status));
+            row.put("canClose",                    isMechanic && isDraft && AppointmentHandler.STATUS_COMPLETED.equals(status));
             row.put("canCancel",                   (isClient || isManager) && isDraft && status != null && CANCELLABLE_STATES.contains(status));
             row.put("canAddItems",                 isMechanic && isDraft
-                    && ("Inspection".equals(status) || "In Progress".equals(status)));
+                    && (AppointmentHandler.STATUS_INSPECTION.equals(status)
+                        || AppointmentHandler.STATUS_IN_PROGRESS.equals(status)));
         }
     }
 
@@ -110,16 +117,14 @@ public class AppointmentSecurityHandler implements EventHandler {
 
         for (AppointmentsItems row : rows) {
             String parentStatus = loadParentStatus(row);
-
             boolean canEditRow;
             int confirmControl;
             if (isMechanic) {
-                canEditRow     = "Inspection".equals(parentStatus);
+                canEditRow     = AppointmentHandler.STATUS_INSPECTION.equals(parentStatus);
                 confirmControl = FC_READ_ONLY;
             } else if (isClient) {
                 canEditRow     = false;
-                confirmControl = (parentStatus != null
-                        && CLIENT_CONFIRM_EDITABLE_STATES.contains(parentStatus))
+                confirmControl = parentStatus != null && CLIENT_CONFIRM_EDITABLE_STATES.contains(parentStatus)
                         ? FC_EDITABLE : FC_READ_ONLY;
             } else {
                 canEditRow     = false;
@@ -137,7 +142,7 @@ public class AppointmentSecurityHandler implements EventHandler {
 
             boolean canDecide = isClient
                     && Boolean.FALSE.equals(row.getIsActiveEntity())
-                    && "Proposed".equals(row.getItemStatus())
+                    && AppointmentHandler.ITEM_PROPOSED.equals(row.getItemStatus())
                     && parentStatus != null
                     && CLIENT_CONFIRM_EDITABLE_STATES.contains(parentStatus);
             row.put("canApproveItem", canDecide);
@@ -156,25 +161,20 @@ public class AppointmentSecurityHandler implements EventHandler {
 
         for (Appointments patch : appointments) {
             Appointments current = loadCurrentAppointment(patch);
-            Set<String> changed = changedFields(patch, current);
+            Set<String> changed = diffKeys(patch, current);
             if (changed.isEmpty()) {
                 continue;
             }
-
             if (changed.contains(Appointments.STATUS)) {
-                throw forbidden(
-                        "Status can only be changed through workflow actions (startInspection, requestApproval, approveItem, rejectItem, complete, close, cancel).");
+                throw forbidden("Status can only be changed through workflow actions (startInspection, requestApproval, approveItem, rejectItem, complete, close, cancel).");
             }
-
             if (isMechanic || isManager) {
-                throw forbidden(
-                        "Only the client may edit appointment header fields.");
+                throw forbidden("Only the client may edit appointment header fields.");
             }
             if (isClient) {
                 String currentStatus = current != null ? current.getStatus() : null;
-                if (!"Created".equals(currentStatus)) {
-                    throw forbidden(
-                            "Header fields can only be edited while the appointment is in 'Created' status.");
+                if (!AppointmentHandler.STATUS_CREATED.equals(currentStatus)) {
+                    throw forbidden("Header fields can only be edited while the appointment is in 'Created' status.");
                 }
             }
         }
@@ -182,13 +182,12 @@ public class AppointmentSecurityHandler implements EventHandler {
 
     @Before(event = { CqnService.EVENT_CREATE, DraftService.EVENT_DRAFT_NEW },
             entity = AppointmentsItems_.CDS_NAME)
-    public void enforceItemCreate(com.sap.cds.services.EventContext context, List<AppointmentsItems> items) {
+    public void enforceItemCreate(EventContext context, List<AppointmentsItems> items) {
         if (items == null || items.isEmpty() || userInfo.isPrivileged()) {
             return;
         }
         if (!userInfo.hasRole(ROLE_MECHANIC)) {
-            throw forbidden(
-                    "Only mechanics may add work / parts items.");
+            throw forbidden("Only mechanics may add work / parts items.");
         }
         String contextParentId = parentIdFromContext(context);
         for (AppointmentsItems item : items) {
@@ -196,31 +195,11 @@ public class AppointmentSecurityHandler implements EventHandler {
                 item.setParentId(contextParentId);
             }
             String parentStatus = loadParentStatus(item);
-            if (!"Inspection".equals(parentStatus) && !"In Progress".equals(parentStatus)) {
-                throw forbidden(
-                        "Items can only be added while the appointment is under inspection or in progress.");
+            if (!AppointmentHandler.STATUS_INSPECTION.equals(parentStatus)
+                    && !AppointmentHandler.STATUS_IN_PROGRESS.equals(parentStatus)) {
+                throw forbidden("Items can only be added while the appointment is under inspection or in progress.");
             }
         }
-    }
-
-    private static String parentIdFromContext(com.sap.cds.services.EventContext context) {
-        Object cqn = context.get("cqn");
-        com.sap.cds.ql.cqn.CqnStructuredTypeRef ref = null;
-        if (cqn instanceof com.sap.cds.ql.cqn.CqnInsert insert) {
-            ref = insert.ref();
-        } else if (cqn instanceof com.sap.cds.ql.cqn.CqnUpsert upsert) {
-            ref = upsert.ref();
-        }
-        if (ref == null) {
-            return null;
-        }
-        com.sap.cds.ql.cqn.AnalysisResult analysis =
-                com.sap.cds.ql.cqn.CqnAnalyzer.create(context.getModel()).analyze(ref);
-        Object id = analysis.targetKeys().get("parent_ID");
-        if (id == null) {
-            id = analysis.rootKeys().get("ID");
-        }
-        return id == null ? null : id.toString();
     }
 
     @Before(event = { CqnService.EVENT_UPDATE, DraftService.EVENT_DRAFT_PATCH },
@@ -234,11 +213,10 @@ public class AppointmentSecurityHandler implements EventHandler {
 
         for (AppointmentsItems item : items) {
             AppointmentsItems current = loadCurrentItem(item);
-            Set<String> changed = changedItemFields(item, current);
+            Set<String> changed = diffKeys(item, current);
             if (changed.isEmpty()) {
                 continue;
             }
-
             String parentStatus = loadParentStatus(item);
 
             if (isClient) {
@@ -246,27 +224,22 @@ public class AppointmentSecurityHandler implements EventHandler {
                         .filter(f -> !CLIENT_WRITABLE_ITEM.contains(f))
                         .collect(Collectors.toSet());
                 if (!illegal.isEmpty()) {
-                    throw forbidden(
-                            "Clients may only toggle item confirmation; forbidden fields: " + illegal);
+                    throw forbidden("Clients may only toggle item confirmation; forbidden fields: " + illegal);
                 }
                 if (parentStatus == null || !CLIENT_CONFIRM_EDITABLE_STATES.contains(parentStatus)) {
-                    throw forbidden(
-                            "Item confirmation can only be toggled while the appointment is waiting for approval.");
+                    throw forbidden("Item confirmation can only be toggled while the appointment is waiting for approval.");
                 }
                 continue;
             }
             if (isMechanic) {
-                if (!"Inspection".equals(parentStatus)) {
-                    throw forbidden(
-                            "Items can only be modified while the appointment is under inspection.");
+                if (!AppointmentHandler.STATUS_INSPECTION.equals(parentStatus)) {
+                    throw forbidden("Items can only be modified while the appointment is under inspection.");
                 }
                 Set<String> illegal = changed.stream()
                         .filter(f -> !MECHANIC_WRITABLE_ITEM.contains(f))
                         .collect(Collectors.toSet());
                 if (!illegal.isEmpty()) {
-                    throw forbidden(
-                            "Mechanics may only set quantity or pick a stock part / offered service; forbidden fields: "
-                                    + illegal);
+                    throw forbidden("Mechanics may only set quantity or pick a stock part / offered service; forbidden fields: " + illegal);
                 }
                 continue;
             }
@@ -276,21 +249,19 @@ public class AppointmentSecurityHandler implements EventHandler {
 
     @Before(event = { CqnService.EVENT_DELETE, DraftService.EVENT_DRAFT_CANCEL },
             entity = AppointmentsItems_.CDS_NAME)
-    public void enforceItemDelete(com.sap.cds.services.EventContext context) {
+    public void enforceItemDelete(EventContext context) {
         if (userInfo.isPrivileged()) {
             return;
         }
         if (!userInfo.hasRole(ROLE_MECHANIC)) {
-            throw forbidden(
-                    "Only mechanics may remove work / parts items.");
+            throw forbidden("Only mechanics may remove work / parts items.");
         }
         Object cqn = context.get("cqn");
-        if (!(cqn instanceof com.sap.cds.ql.cqn.CqnDelete deleteCqn)) {
+        if (!(cqn instanceof CqnDelete deleteCqn)) {
             return;
         }
-        Map<String, Object> keys = com.sap.cds.ql.cqn.CqnAnalyzer.create(context.getModel())
-                .analyze(deleteCqn.ref()).targetKeys();
-        Object parentId = keys.get("parent_ID");
+        Object parentId = CqnAnalyzer.create(context.getModel())
+                .analyze(deleteCqn.ref()).targetKeys().get("parent_ID");
         if (parentId == null) {
             return;
         }
@@ -300,14 +271,32 @@ public class AppointmentSecurityHandler implements EventHandler {
                 .first(Appointments.class)
                 .map(Appointments::getStatus)
                 .orElse(null);
-        if (!"Inspection".equals(parentStatus)) {
-            throw forbidden(
-                    "Items can only be deleted while the appointment is under inspection.");
+        if (!AppointmentHandler.STATUS_INSPECTION.equals(parentStatus)) {
+            throw forbidden("Items can only be deleted while the appointment is under inspection.");
         }
     }
 
     private static ServiceException forbidden(String message) {
         return new ServiceException(ErrorStatuses.FORBIDDEN, message);
+    }
+
+    private static String parentIdFromContext(EventContext context) {
+        Object cqn = context.get("cqn");
+        CqnStructuredTypeRef ref = null;
+        if (cqn instanceof CqnInsert insert) {
+            ref = insert.ref();
+        } else if (cqn instanceof CqnUpsert upsert) {
+            ref = upsert.ref();
+        }
+        if (ref == null) {
+            return null;
+        }
+        AnalysisResult analysis = CqnAnalyzer.create(context.getModel()).analyze(ref);
+        Object id = analysis.targetKeys().get("parent_ID");
+        if (id == null) {
+            id = analysis.rootKeys().get("ID");
+        }
+        return id == null ? null : id.toString();
     }
 
     private Appointments loadCurrentAppointment(Appointments patch) {
@@ -343,14 +332,6 @@ public class AppointmentSecurityHandler implements EventHandler {
                 .first(Appointments.class)
                 .map(Appointments::getStatus)
                 .orElse(null);
-    }
-
-    private Set<String> changedFields(Appointments patch, Appointments current) {
-        return diffKeys(patch, current);
-    }
-
-    private Set<String> changedItemFields(AppointmentsItems patch, AppointmentsItems current) {
-        return diffKeys(patch, current);
     }
 
     private static Set<String> diffKeys(Map<String, Object> patch, Map<String, Object> current) {

@@ -3,7 +3,11 @@ package customer.autorepairshop.handlers;
 import java.math.BigDecimal;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.stream.Collectors;
+
+import org.springframework.beans.factory.annotation.Qualifier;
+import org.springframework.stereotype.Component;
 
 import com.sap.cds.ql.Insert;
 import com.sap.cds.ql.Select;
@@ -17,8 +21,6 @@ import com.sap.cds.services.handler.EventHandler;
 import com.sap.cds.services.handler.annotations.On;
 import com.sap.cds.services.handler.annotations.ServiceName;
 import com.sap.cds.services.persistence.PersistenceService;
-import org.springframework.beans.factory.annotation.Qualifier;
-import org.springframework.stereotype.Component;
 
 import cds.gen.repairservice.Appointments;
 import cds.gen.repairservice.AppointmentsApplyStandardMaintenanceContext;
@@ -41,8 +43,6 @@ public class StandardMaintenanceHandler implements EventHandler {
 
     private static final BigDecimal OIL_DEFAULT_QUANTITY = new BigDecimal("4");
     private static final BigDecimal FILTER_DEFAULT_QUANTITY = BigDecimal.ONE;
-    private static final String OPEN_IN_EDIT_MODE_MESSAGE =
-            "Please open the appointment in Edit mode first, then apply Standard Maintenance.";
 
     private final PersistenceService db;
     private final DraftService draftService;
@@ -55,13 +55,13 @@ public class StandardMaintenanceHandler implements EventHandler {
 
     @On(event = AppointmentsApplyStandardMaintenanceContext.CDS_NAME, entity = Appointments_.CDS_NAME)
     public void onApplyStandardMaintenance(AppointmentsApplyStandardMaintenanceContext context) {
-        if (!context.getUserInfo().hasRole("Mechanic")) {
-            throw new ServiceException(ErrorStatuses.FORBIDDEN,
-                    "Only Mechanic may apply Standard Maintenance.");
+        if (!context.getUserInfo().hasRole(AppointmentSecurityHandler.ROLE_MECHANIC)) {
+            throw new ServiceException(ErrorStatuses.FORBIDDEN, "Only Mechanic may apply Standard Maintenance.");
         }
         AnalysisResult analysis = CqnAnalyzer.create(context.getModel()).analyze(context.getCqn());
         if (Boolean.TRUE.equals(analysis.targetKeys().get(Appointments.IS_ACTIVE_ENTITY))) {
-            throw new ServiceException(ErrorStatuses.BAD_REQUEST, OPEN_IN_EDIT_MODE_MESSAGE);
+            throw new ServiceException(ErrorStatuses.BAD_REQUEST,
+                    "Please open the appointment in Edit mode first, then apply Standard Maintenance.");
         }
         Object idValue = analysis.targetKeys().get(Appointments.ID);
         if (idValue == null) {
@@ -70,8 +70,7 @@ public class StandardMaintenanceHandler implements EventHandler {
         }
         String appointmentId = String.valueOf(idValue);
         Appointments appointment = loadDraftAppointment(appointmentId);
-
-        if (!"Inspection".equals(appointment.getStatus())) {
+        if (!AppointmentHandler.STATUS_INSPECTION.equals(appointment.getStatus())) {
             throw new ServiceException(ErrorStatuses.BAD_REQUEST,
                     "Standard Maintenance can only be applied while the appointment is under inspection.");
         }
@@ -80,53 +79,48 @@ public class StandardMaintenanceHandler implements EventHandler {
         ServicesOffered standardService = loadStandardService();
 
         context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
-            addOrIncrementWork(appointmentId, standardService.getId(), BigDecimal.ONE);
-            addOrIncrementPart(appointmentId, requirePart(standardParts, STD_OIL_ARTICLE).getId(),
-                    OIL_DEFAULT_QUANTITY);
-            addOrIncrementPart(appointmentId, requirePart(standardParts, STD_FILTER_ARTICLE).getId(),
-                    FILTER_DEFAULT_QUANTITY);
+            addOrIncrement(appointmentId, standardService.getId(), null, BigDecimal.ONE);
+            addOrIncrement(appointmentId, null, requirePart(standardParts, STD_OIL_ARTICLE).getId(), OIL_DEFAULT_QUANTITY);
+            addOrIncrement(appointmentId, null, requirePart(standardParts, STD_FILTER_ARTICLE).getId(), FILTER_DEFAULT_QUANTITY);
         });
 
         context.setResult(loadDraftAppointment(appointmentId));
         context.setCompleted();
     }
 
-    private void addOrIncrementWork(String appointmentId, String serviceId, BigDecimal additionalHours) {
+    private void addOrIncrement(String appointmentId, String serviceId, String stockId, BigDecimal delta) {
+        boolean isWork = serviceId != null;
+        String matchAgainst = isWork ? serviceId : stockId;
+        String field = isWork ? AppointmentsItems.DURATION : AppointmentsItems.QUANTITY;
         for (AppointmentsItems existing : loadDraftItems(appointmentId)) {
-            if (serviceId.equals(existing.getServicesOfferedItemId()) && existing.getPos() != null) {
-                BigDecimal current = existing.getDuration() != null ? existing.getDuration() : BigDecimal.ZERO;
-                patchItem(appointmentId, existing.getPos(), AppointmentsItems.DURATION, current.add(additionalHours));
-                return;
+            if (existing.getPos() == null) {
+                continue;
             }
+            String existingRef = isWork ? existing.getServicesOfferedItemId() : existing.getStockItemId();
+            boolean match = Objects.equals(matchAgainst, existingRef);
+            if (!match) {
+                continue;
+            }
+            BigDecimal current = isWork
+                    ? (existing.getDuration() != null ? existing.getDuration() : BigDecimal.ZERO)
+                    : (existing.getQuantity() != null ? existing.getQuantity() : BigDecimal.ZERO);
+            draftService.patchDraft(Update.entity(AppointmentsItems_.class)
+                    .data(field, current.add(delta))
+                    .where(i -> i.parent_ID().eq(appointmentId)
+                            .and(i.pos().eq(existing.getPos()))
+                            .and(i.IsActiveEntity().eq(false))));
+            return;
         }
         AppointmentsItems item = AppointmentsItems.create();
         item.setParentId(appointmentId);
-        item.setServicesOfferedItemId(serviceId);
-        item.setDuration(additionalHours);
-        draftService.newDraft(Insert.into(AppointmentsItems_.class).entry(item));
-    }
-
-    private void addOrIncrementPart(String appointmentId, String stockId, BigDecimal additionalQuantity) {
-        for (AppointmentsItems existing : loadDraftItems(appointmentId)) {
-            if (stockId.equals(existing.getStockItemId()) && existing.getPos() != null) {
-                BigDecimal current = existing.getQuantity() != null ? existing.getQuantity() : BigDecimal.ZERO;
-                patchItem(appointmentId, existing.getPos(), AppointmentsItems.QUANTITY, current.add(additionalQuantity));
-                return;
-            }
+        if (isWork) {
+            item.setServicesOfferedItemId(serviceId);
+            item.setDuration(delta);
+        } else {
+            item.setStockItemId(stockId);
+            item.setQuantity(delta);
         }
-        AppointmentsItems item = AppointmentsItems.create();
-        item.setParentId(appointmentId);
-        item.setStockItemId(stockId);
-        item.setQuantity(additionalQuantity);
         draftService.newDraft(Insert.into(AppointmentsItems_.class).entry(item));
-    }
-
-    private void patchItem(String appointmentId, int pos, String field, BigDecimal value) {
-        draftService.patchDraft(Update.entity(AppointmentsItems_.class)
-                .data(field, value)
-                .where(i -> i.parent_ID().eq(appointmentId)
-                        .and(i.pos().eq(pos))
-                        .and(i.IsActiveEntity().eq(false))));
     }
 
     private Appointments loadDraftAppointment(String appointmentId) {
@@ -156,7 +150,7 @@ public class StandardMaintenanceHandler implements EventHandler {
                         "Standard maintenance service not found: " + STD_OIL_CHANGE_CODE));
     }
 
-    private Stocks requirePart(Map<String, Stocks> standardParts, String articleNo) {
+    private static Stocks requirePart(Map<String, Stocks> standardParts, String articleNo) {
         Stocks part = standardParts.get(articleNo);
         if (part == null) {
             throw new ServiceException(ErrorStatuses.NOT_FOUND,
