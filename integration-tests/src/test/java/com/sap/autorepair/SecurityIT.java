@@ -28,6 +28,12 @@ public class SecurityIT {
     private static final String APPT_BRAKE_CLIENT1 = "2d7a0f54-8d18-4b64-9c4f-6a2dcb551002";
     private static final String APPT_DIAG_CLIENT2  = "5b3c7a91-9f2e-4c18-a7b9-1d6e3f441003";
 
+    private static final String STOCK_BRAKE_PAD_ORIGINAL = "8f4d1b20-6a5e-4d7c-9b34-12f0a0011001";
+    private static final String SERVICE_STD_MAINT        = "5b91d7c3-8a42-4f6e-9c01-12f0a0012001";
+
+    private static final String STOCKS_URL           = "/odata/v4/RepairService/Stocks";
+    private static final String SERVICES_URL         = "/odata/v4/RepairService/ServicesOffered";
+
     @Autowired
     private MockMvc mockMvc;
 
@@ -185,6 +191,155 @@ public class SecurityIT {
         mockMvc.perform(patch("/odata/v4/RepairService/Appointments(ID=" + APPT_OIL_CLIENT1 + ",IsActiveEntity=true)")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{ \"vin\": \"WBA00000000000099\" }"))
+                .andDo(print())
+                .andExpect(status().isForbidden());
+    }
+
+    // ========================================================================
+    // Stocks security: Client = no access, Mechanic = READ only, Manager = CRU
+    // ========================================================================
+
+    @Test
+    @WithMockUser(username = "client1", roles = "Client")
+    public void clientCannotReadStocks() throws Exception {
+        mockMvc.perform(get(STOCKS_URL))
+                .andDo(print())
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "client1", roles = "Client")
+    public void clientCannotCreateStock() throws Exception {
+        mockMvc.perform(post(STOCKS_URL)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"articleNo\":\"X\",\"name\":\"X\",\"type\":\"Original\"}"))
+                .andDo(print())
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "bob", roles = "Mechanic")
+    public void mechanicCanReadStocks() throws Exception {
+        mockMvc.perform(get(STOCKS_URL + "?$filter=IsActiveEntity eq true"))
+                .andDo(print())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.value").isArray());
+    }
+
+    @Test
+    @WithMockUser(username = "bob", roles = "Mechanic")
+    public void mechanicCannotCreateStock() throws Exception {
+        mockMvc.perform(post(STOCKS_URL)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"articleNo\":\"X\",\"name\":\"X\",\"type\":\"Original\"}"))
+                .andDo(print())
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "bob", roles = "Mechanic")
+    public void mechanicCannotDraftEditStock() throws Exception {
+        mockMvc.perform(post(STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL + ",IsActiveEntity=true)/RepairService.draftEdit")
+                .header("If-Match", "*")
+                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andDo(print())
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "alice", roles = "Manager")
+    public void managerCanReadStocks() throws Exception {
+        mockMvc.perform(get(STOCKS_URL + "?$filter=IsActiveEntity eq true"))
+                .andDo(print())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.value").isArray());
+    }
+
+    @Test
+    @WithMockUser(username = "alice", roles = "Manager")
+    public void managerCanDraftEditAndPatchStock() throws Exception {
+        String editUrl  = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL + ",IsActiveEntity=true)/RepairService.draftEdit";
+        String draftUrl = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL + ",IsActiveEntity=false)";
+
+        mockMvc.perform(post(editUrl)
+                .header("If-Match", "*")
+                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+               .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(patch(draftUrl)
+                .header("If-Match", "*")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{ \"quantity\": 99.00 }"))
+                .andDo(print())
+                .andExpect(status().is2xxSuccessful());
+    }
+
+    @Test
+    @WithMockUser(username = "alice", roles = "Manager")
+    public void managerCannotDeleteStock() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .delete(STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL + ",IsActiveEntity=true)")
+                .header("If-Match", "*"))
+                .andDo(print())
+                .andExpect(status().isForbidden());
+    }
+
+    // ================================================================================
+    // ServicesOffered security: Client = no access, Mechanic = READ only, Manager = CRU
+    // ================================================================================
+
+    @Test
+    @WithMockUser(username = "client1", roles = "Client")
+    public void clientCannotReadServicesOffered() throws Exception {
+        mockMvc.perform(get(SERVICES_URL))
+                .andDo(print())
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "bob", roles = "Mechanic")
+    public void mechanicCanReadServicesOffered() throws Exception {
+        mockMvc.perform(get(SERVICES_URL + "?$filter=IsActiveEntity eq true"))
+                .andDo(print())
+                .andExpect(status().isOk())
+                .andExpect(jsonPath("$.value").isArray());
+    }
+
+    @Test
+    @WithMockUser(username = "bob", roles = "Mechanic")
+    public void mechanicCannotCreateServiceOffered() throws Exception {
+        mockMvc.perform(post(SERVICES_URL)
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{\"workCode\":\"X\",\"name\":\"X\"}"))
+                .andDo(print())
+                .andExpect(status().isForbidden());
+    }
+
+    @Test
+    @WithMockUser(username = "alice", roles = "Manager")
+    public void managerCanDraftEditAndPatchServiceOffered() throws Exception {
+        String editUrl  = SERVICES_URL + "(ID=" + SERVICE_STD_MAINT + ",IsActiveEntity=true)/RepairService.draftEdit";
+        String draftUrl = SERVICES_URL + "(ID=" + SERVICE_STD_MAINT + ",IsActiveEntity=false)";
+
+        mockMvc.perform(post(editUrl)
+                .header("If-Match", "*")
+                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+               .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(patch(draftUrl)
+                .header("If-Match", "*")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{ \"standardHour\": 75.00 }"))
+                .andDo(print())
+                .andExpect(status().is2xxSuccessful());
+    }
+
+    @Test
+    @WithMockUser(username = "alice", roles = "Manager")
+    public void managerCannotDeleteServiceOffered() throws Exception {
+        mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
+                .delete(SERVICES_URL + "(ID=" + SERVICE_STD_MAINT + ",IsActiveEntity=true)")
+                .header("If-Match", "*"))
                 .andDo(print())
                 .andExpect(status().isForbidden());
     }

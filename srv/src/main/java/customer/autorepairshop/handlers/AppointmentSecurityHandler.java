@@ -94,7 +94,7 @@ public class AppointmentSecurityHandler implements EventHandler {
             row.put("canRequestApproval",          isMechanic && isDraft && "Inspection".equals(status));
             row.put("canComplete",                 isMechanic && isDraft && "In Progress".equals(status));
             row.put("canClose",                    isMechanic && isDraft && "Completed".equals(status));
-            row.put("canCancel",                   (isClient || isManager) && isDraft && CANCELLABLE_STATES.contains(status));
+            row.put("canCancel",                   (isClient || isManager) && isDraft && status != null && CANCELLABLE_STATES.contains(status));
             row.put("canAddItems",                 isMechanic && isDraft
                     && ("Inspection".equals(status) || "In Progress".equals(status)));
         }

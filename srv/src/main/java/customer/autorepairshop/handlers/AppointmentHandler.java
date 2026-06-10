@@ -129,10 +129,9 @@ public class AppointmentHandler implements EventHandler {
         if (stockId == null || stockId.isBlank()) {
             throw new ServiceException(ErrorStatuses.BAD_REQUEST, "Please pick a part.");
         }
-        addItemToDraft(context, stockId, null);
-        boolean isActive = extractIsActive(context.getCqn(), context.getModel());
+        int pos = addItemToDraft(context, stockId, null);
         String id = extractAppointmentId(context.getCqn(), context.getModel());
-        context.setResult(loadAppointment(id, isActive));
+        context.setResult(loadDraftItem(id, pos));
         context.setCompleted();
     }
 
@@ -142,14 +141,22 @@ public class AppointmentHandler implements EventHandler {
         if (serviceId == null || serviceId.isBlank()) {
             throw new ServiceException(ErrorStatuses.BAD_REQUEST, "Please pick a service.");
         }
-        addItemToDraft(context, null, serviceId);
-        boolean isActive = extractIsActive(context.getCqn(), context.getModel());
+        int pos = addItemToDraft(context, null, serviceId);
         String id = extractAppointmentId(context.getCqn(), context.getModel());
-        context.setResult(loadAppointment(id, isActive));
+        context.setResult(loadDraftItem(id, pos));
         context.setCompleted();
     }
 
-    private void addItemToDraft(com.sap.cds.services.EventContext context, String stockId, String serviceId) {
+    private AppointmentsItems loadDraftItem(String parentId, int pos) {
+        return draftService.run(Select.from(AppointmentsItems_.class)
+                        .where(i -> i.parent_ID().eq(parentId)
+                                .and(i.pos().eq(pos))
+                                .and(i.IsActiveEntity().eq(false))))
+                .first(AppointmentsItems.class)
+                .orElseThrow(() -> new ServiceException(ErrorStatuses.NOT_FOUND, "Item not found"));
+    }
+
+    private int addItemToDraft(com.sap.cds.services.EventContext context, String stockId, String serviceId) {
         requireAnyRole(context, "Mechanic");
         com.sap.cds.ql.cqn.CqnSelect cqn = (com.sap.cds.ql.cqn.CqnSelect) context.get("cqn");
         boolean isActive = extractIsActive(cqn, context.getModel());
@@ -160,8 +167,11 @@ public class AppointmentHandler implements EventHandler {
             throw new ServiceException(ErrorStatuses.BAD_REQUEST,
                     "Items can only be added while the appointment is under inspection or in progress");
         }
+        int[] resultPos = new int[1];
         context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
-            if (incrementExistingDraftItem(parentId, stockId, serviceId)) {
+            Integer existingPos = incrementExistingDraftItem(parentId, stockId, serviceId);
+            if (existingPos != null) {
+                resultPos[0] = existingPos;
                 return;
             }
             int nextPos = nextPosFor(parentId);
@@ -175,10 +185,12 @@ public class AppointmentHandler implements EventHandler {
                 item.setServicesOfferedItemId(serviceId);
             }
             draftService.newDraft(Insert.into(AppointmentsItems_.class).entry(item));
+            resultPos[0] = nextPos;
         });
+        return resultPos[0];
     }
 
-    private boolean incrementExistingDraftItem(String parentId, String stockId, String serviceId) {
+    private Integer incrementExistingDraftItem(String parentId, String stockId, String serviceId) {
         var draftItems = draftService.run(Select.from(AppointmentsItems_.class)
                         .where(i -> i.parent_ID().eq(parentId).and(i.IsActiveEntity().eq(false))))
                 .listOf(AppointmentsItems.class);
@@ -204,9 +216,9 @@ public class AppointmentHandler implements EventHandler {
                     .where(i -> i.parent_ID().eq(parentId)
                             .and(i.pos().eq(pos))
                             .and(i.IsActiveEntity().eq(false))));
-            return true;
+            return pos;
         }
-        return false;
+        return null;
     }
 
     @On(event = AppointmentsItemsApproveItemContext.CDS_NAME, entity = AppointmentsItems_.CDS_NAME)
@@ -291,9 +303,32 @@ public class AppointmentHandler implements EventHandler {
         }
         context.getCdsRuntime().requestContext().privilegedUser().run(ctx -> {
             updateAppointmentStatus(id, isActive, "Cancelled");
+            rejectOpenPartItemsInDraft(id);
         });
         context.setResult(loadAppointment(id, isActive));
         context.setCompleted();
+    }
+
+    private void rejectOpenPartItemsInDraft(String parentId) {
+        var draftItems = draftService.run(Select.from(AppointmentsItems_.class)
+                        .where(i -> i.parent_ID().eq(parentId).and(i.IsActiveEntity().eq(false))))
+                .listOf(AppointmentsItems.class);
+        for (AppointmentsItems it : draftItems) {
+            if (it.getPos() == null) {
+                continue;
+            }
+            if (!ItemType.PART.equals(it.getType())) {
+                continue;
+            }
+            if ("Rejected".equals(it.getItemStatus())) {
+                continue;
+            }
+            draftService.run(Update.entity(AppointmentsItems_.class)
+                    .data(AppointmentsItems.ITEM_STATUS, "Rejected")
+                    .where(a -> a.parent_ID().eq(parentId)
+                            .and(a.pos().eq(it.getPos()))
+                            .and(a.IsActiveEntity().eq(false))));
+        }
     }
 
     @com.sap.cds.services.handler.annotations.Before(event = DraftService.EVENT_DRAFT_SAVE, entity = Appointments_.CDS_NAME)

@@ -81,7 +81,7 @@ service RepairService {
                     { $Type: 'Common.ValueListParameterDisplayOnly', ValueListProperty: 'price' },
                     { $Type: 'Common.ValueListParameterDisplayOnly', ValueListProperty: 'currency_code' }
                 ]
-            }) returns Appointments;
+            }) returns Appointments.Items;
             action addWork(servicesOfferedItem : UUID @title: 'Work' @Common.ValueList: {
                 CollectionPath: 'ServicesOffered',
                 Parameters    : [
@@ -91,7 +91,7 @@ service RepairService {
                     { $Type: 'Common.ValueListParameterDisplayOnly', ValueListProperty: 'standardHour' },
                     { $Type: 'Common.ValueListParameterDisplayOnly', ValueListProperty: 'currency_code' }
                 ]
-            }) returns Appointments;
+            }) returns Appointments.Items;
         };
 
     entity Appointments.Items as projection on db.Appointments.Items {
@@ -121,19 +121,29 @@ service RepairService {
     };
 
     @(restrict: [
-        { grant: 'READ', to: ['Client','Mechanic'] },
-        { grant: 'getAvailableSubstitutes', to: ['Client','Mechanic'] },
-        { grant: '*',    to: 'Manager' }
+        { grant: 'READ', to: 'Mechanic' },
+        { grant: 'getAvailableSubstitutes', to: 'Mechanic' },
+        { grant: ['READ','CREATE','UPDATE'], to: 'Manager' }
     ])
+    @odata.draft.enabled
+    @cds.redirection.target
     entity Stocks          as projection on db.Stocks
         actions {
             function getAvailableSubstitutes() returns many Stocks;
         };
 
+    @readonly
     @(restrict: [
-        { grant: 'READ', to: ['Client','Mechanic'] },
-        { grant: '*',    to: 'Manager' }
+        { grant: 'READ', to: ['Mechanic','Manager'] }
     ])
+    @cds.redirection.target: false
+    entity OriginalStocks  as projection on db.Stocks where type = 'Original';
+
+    @(restrict: [
+        { grant: 'READ', to: 'Mechanic' },
+        { grant: ['READ','CREATE','UPDATE'], to: 'Manager' }
+    ])
+    @odata.draft.enabled
     entity ServicesOffered as projection on db.OfferedServices;
 
     @readonly
@@ -148,3 +158,21 @@ service RepairService {
     entity MasterLogs      as projection on db.MasterLogs;
 
 }
+
+annotate RepairService.Stocks          with { modifiedAt @odata.etag; };
+annotate RepairService.ServicesOffered with { modifiedAt @odata.etag; };
+
+annotate RepairService.Appointments with actions {
+    addPart @(
+        Common.SideEffects : {
+            TargetProperties : [ '_it/totalAmount', '_it/estimatedAmount', '_it/partsPercentage' ],
+            TargetEntities   : [ '_it/items' ]
+        }
+    );
+    addWork @(
+        Common.SideEffects : {
+            TargetProperties : [ '_it/totalAmount', '_it/estimatedAmount', '_it/partsPercentage' ],
+            TargetEntities   : [ '_it/items' ]
+        }
+    );
+};

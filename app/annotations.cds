@@ -328,3 +328,143 @@ annotate RepairService.Appointments with actions {
     @Core.OperationAvailable: { $edmJson: { $Path: 'in/canAddItems' } }
     @Common.SideEffects: { TargetEntities: [items], TargetProperties: [totalAmount] }
 };
+
+annotate RepairService.Stocks with {
+    ID            @UI.Hidden;
+    articleNo     @title: 'Article No.';
+    name          @title: 'Name';
+    brand         @title: 'Brand';
+    type          @title: 'Type'
+                  @Core.Computed: true;
+    quantity      @title: 'Stock Qty';
+    price         @title: 'Price'
+                  @Measures.ISOCurrency: currency_code;
+    currency_code @title: 'Currency';
+    original      @title: 'Original Part'
+                  @Common.ValueList: {
+                      CollectionPath: 'OriginalStocks',
+                      Parameters    : [
+                          { $Type            : 'Common.ValueListParameterInOut',
+                            LocalDataProperty: original_ID,
+                            ValueListProperty: 'ID' },
+                          { $Type            : 'Common.ValueListParameterDisplayOnly',
+                            ValueListProperty: 'articleNo' },
+                          { $Type            : 'Common.ValueListParameterDisplayOnly',
+                            ValueListProperty: 'name' },
+                          { $Type            : 'Common.ValueListParameterDisplayOnly',
+                            ValueListProperty: 'brand' }
+                      ]
+                  };
+    createdAt     @title: 'Created';
+    createdBy     @title: 'Created By';
+    modifiedAt    @title: 'Last Changed';
+    modifiedBy    @title: 'Last Changed By';
+};
+
+annotate RepairService.Stocks with @(
+    Common.SideEffects #typeFromOriginal: {
+        SourceProperties: [original_ID],
+        TargetProperties: ['type']
+    },
+    UI: {
+        HeaderInfo      : {
+            TypeName       : 'Part',
+            TypeNamePlural : 'Parts',
+            Title          : { Value: name },
+            Description    : { Value: articleNo }
+        },
+
+        SelectionFields : [ articleNo, name, brand, type ],
+
+        LineItem        : [
+            { Value: articleNo, Label: 'Article No.' },
+            { Value: name },
+            { Value: brand },
+            { Value: type },
+            { Value: quantity },
+            { Value: price }
+        ],
+
+        Facets          : [
+            { $Type : 'UI.ReferenceFacet',
+              Label : 'General',
+              Target: '@UI.FieldGroup#General' },
+            { $Type : 'UI.ReferenceFacet',
+              Label : 'Pricing & Stock',
+              Target: '@UI.FieldGroup#PricingStock' },
+            { $Type : 'UI.ReferenceFacet',
+              Label : 'Administrative',
+              Target: '@UI.FieldGroup#Admin' }
+        ],
+
+        FieldGroup #General      : { Data: [
+            { Value: brand },
+            { Value: original_ID, Label: 'Original Part' },
+            { Value: type }
+        ]},
+
+        FieldGroup #PricingStock : { Data: [
+            { Value: quantity },
+            { Value: price },
+            { Value: currency_code }
+        ]},
+
+        FieldGroup #Admin        : { Data: [
+            { Value: createdAt },
+            { Value: createdBy },
+            { Value: modifiedAt },
+            { Value: modifiedBy }
+        ]}
+    }
+);
+
+annotate RepairService.ServicesOffered with {
+    ID            @UI.Hidden;
+    workCode      @title: 'Work Code';
+    name          @title: 'Name';
+    standardHour  @title: 'Hourly Rate'
+                  @Measures.ISOCurrency: currency_code;
+    currency_code @title: 'Currency';
+    createdAt     @title: 'Created';
+    createdBy     @title: 'Created By';
+    modifiedAt    @title: 'Last Changed';
+    modifiedBy    @title: 'Last Changed By';
+};
+
+annotate RepairService.ServicesOffered with @(UI: {
+    HeaderInfo      : {
+        TypeName       : 'Service',
+        TypeNamePlural : 'Services',
+        Title          : { Value: name },
+        Description    : { Value: workCode }
+    },
+
+    SelectionFields : [ workCode, name ],
+
+    LineItem        : [
+        { Value: workCode, Label: 'Work Code' },
+        { Value: name },
+        { Value: standardHour }
+    ],
+
+    Facets          : [
+        { $Type : 'UI.ReferenceFacet',
+          Label : 'Pricing',
+          Target: '@UI.FieldGroup#Pricing' },
+        { $Type : 'UI.ReferenceFacet',
+          Label : 'Administrative',
+          Target: '@UI.FieldGroup#Admin' }
+    ],
+
+    FieldGroup #Pricing : { Data: [
+        { Value: standardHour },
+        { Value: currency_code }
+    ]},
+
+    FieldGroup #Admin   : { Data: [
+        { Value: createdAt },
+        { Value: createdBy },
+        { Value: modifiedAt },
+        { Value: modifiedBy }
+    ]}
+});

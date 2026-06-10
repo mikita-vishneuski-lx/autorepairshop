@@ -61,8 +61,7 @@ entity Stocks : cuid, managed {
 
     brand : String (50);
 
-    @mandatory
-    type : StockType;
+    type : StockType default 'Original';
 
     quantity: Decimal(10, 2);
     price: Decimal(15, 2);

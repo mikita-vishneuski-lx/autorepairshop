@@ -7,7 +7,10 @@ import org.springframework.stereotype.Component;
 
 import com.sap.cds.ql.Select;
 import com.sap.cds.ql.cqn.CqnSelect;
+import com.sap.cds.services.cds.CqnService;
+import com.sap.cds.services.draft.DraftService;
 import com.sap.cds.services.handler.EventHandler;
+import com.sap.cds.services.handler.annotations.Before;
 import com.sap.cds.services.handler.annotations.On;
 import com.sap.cds.services.handler.annotations.ServiceName;
 import com.sap.cds.services.persistence.PersistenceService;
@@ -28,6 +31,27 @@ public class StockHandler implements EventHandler {
 
     public StockHandler(PersistenceService db) {
         this.db = db;
+    }
+
+    @Before(event = { CqnService.EVENT_CREATE, CqnService.EVENT_UPDATE,
+                      DraftService.EVENT_DRAFT_NEW, DraftService.EVENT_DRAFT_PATCH },
+            entity = Stocks_.CDS_NAME)
+    public void deriveTypeFromOriginal(List<Stocks> stocks) {
+        if (stocks == null) {
+            return;
+        }
+        for (Stocks stock : stocks) {
+            if (stock == null) {
+                continue;
+            }
+            boolean originalTouched = stock.containsKey(Stocks.ORIGINAL_ID)
+                                      || stock.containsKey("original");
+            if (!originalTouched && !stock.containsKey(Stocks.TYPE)) {
+                continue;
+            }
+            String derived = stock.getOriginalId() != null ? TYPE_ANALOG : TYPE_ORIGINAL;
+            stock.setType(derived);
+        }
     }
 
     @On(entity = Stocks_.CDS_NAME)
@@ -73,3 +97,4 @@ public class StockHandler implements EventHandler {
         context.setResult(availableSubstitutes);
     }
 }
+
