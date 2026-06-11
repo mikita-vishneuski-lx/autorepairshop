@@ -1,4 +1,4 @@
-code;name;descr
-Proposed;Proposed;Awaiting client decision
-Approved;Approved;Client approved this item
-Rejected;Rejected;Client rejected this item
+code;name;descr;criticality;sequence;isTerminal
+Proposed;Proposed;Awaiting client decision;2;10;false
+Approved;Approved;Client approved this item;3;20;true
+Rejected;Rejected;Client rejected this item;1;30;true

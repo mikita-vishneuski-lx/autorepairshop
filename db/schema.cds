@@ -18,7 +18,7 @@ entity Appointments : cuid, managed {
     productionYear : Integer;
 
     description: String(1000);
-    status: String(40) default 'Created';
+    status: Association to AppointmentStatuses default 'Created';
 
     estimatedAmount: Decimal(15, 2);
     totalAmount: Decimal(15, 2);
@@ -45,7 +45,7 @@ entity Appointments.Items {
     currency : Currency;
 
     confirmedByClient : Boolean default false;
-    itemStatus : String(20) default 'Proposed';
+    itemStatus : Association to AppointmentItemStatuses default 'Proposed';
 
     stockItem : Association to Stocks;
     servicesOfferedItem : Association to OfferedServices;
@@ -83,23 +83,33 @@ entity OfferedServices : cuid, managed {
 }
 
 entity AppointmentStatuses : CodeList {
-    key code : String enum {
-        CREATED              = 'Created';
-        INSPECTION           = 'Inspection';
-        WAITING_FOR_APPROVAL = 'Waiting for approval';
-        IN_PROGRESS          = 'In Progress';
-        COMPLETED            = 'Completed';
-        CLOSED               = 'Closed';
-        CANCELLED            = 'Cancelled';
-    };
+    key code    : AppointmentStatusCode;
+    criticality : Integer default 0;
+    sequence    : Integer default 0;
+    isTerminal  : Boolean default false;
 }
 
 entity AppointmentItemStatuses : CodeList {
-    key code : String enum {
-        PROPOSED = 'Proposed';
-        APPROVED = 'Approved';
-        REJECTED = 'Rejected';
-    };
+    key code    : AppointmentItemStatusCode;
+    criticality : Integer default 0;
+    sequence    : Integer default 0;
+    isTerminal  : Boolean default false;
+}
+
+type AppointmentStatusCode : String(40) enum {
+    Created;
+    Inspection;
+    WaitingForApproval = 'Waiting for approval';
+    InProgress         = 'In Progress';
+    Completed;
+    Closed;
+    Cancelled;
+}
+
+type AppointmentItemStatusCode : String(20) enum {
+    Proposed;
+    Approved;
+    Rejected;
 }
 
 type ItemType : String enum {

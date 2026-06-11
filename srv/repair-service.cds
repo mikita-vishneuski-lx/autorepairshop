@@ -22,7 +22,7 @@ service RepairService {
 
     @(restrict: [
         { grant: 'CREATE', to: 'Client' },
-        { grant: ['READ','UPDATE','cancel'], to: 'Client',   where: 'createdBy = $user' },
+        { grant: ['READ','UPDATE','cancel','approveAllItems','rejectAllItems'], to: 'Client',   where: 'createdBy = $user' },
         { grant: ['READ','UPDATE','applyStandardMaintenance','requestApproval','complete','close','addPart','addWork'], to: 'Mechanic' },
         { grant: ['READ','UPDATE','startInspection','cancel'], to: 'Manager'  }
     ])
@@ -31,24 +31,16 @@ service RepairService {
         projection on db.Appointments {
             *,
 
-            case
-                status
-                when 'Created'
-                     then 5
-                when 'Inspection'
-                     then 2
-                when 'Waiting for approval'
-                     then 2
-                when 'In Progress'
-                     then 0
-                when 'Completed'
-                     then 3
-                when 'Closed'
-                     then 3
-                when 'Cancelled'
-                     then 1
+            case status.code
+                when 'Created'              then 5
+                when 'Inspection'           then 2
+                when 'Waiting for approval' then 2
+                when 'In Progress'          then 0
+                when 'Completed'            then 3
+                when 'Closed'               then 3
+                when 'Cancelled'            then 1
                 else 0
-            end  as statusCriticality : Integer,
+            end as statusCriticality : Integer,
 
             null as partsPercentage   : Integer,
 
@@ -61,6 +53,8 @@ service RepairService {
             virtual null as canClose                    : Boolean,
             virtual null as canCancel                   : Boolean,
             virtual null as canAddItems                 : Boolean,
+            virtual null as canApproveAllItems          : Boolean,
+            virtual null as canRejectAllItems           : Boolean,
 
             items : redirected to Appointments.Items
 
@@ -72,6 +66,8 @@ service RepairService {
             action complete() returns Appointments;
             action close() returns Appointments;
             action cancel() returns Appointments;
+            action approveAllItems() returns Appointments;
+            action rejectAllItems()  returns Appointments;
             action addPart(stockItem : UUID @title: 'Part' @Common.ValueList: {
                 CollectionPath: 'Stocks',
                 Parameters    : [
@@ -99,10 +95,10 @@ service RepairService {
         coalesce(unitPrice, 0)
             * coalesce(case when type = 'Work' then duration else quantity end, 0)
             as totalPrice : Decimal(15, 2),
-        case itemStatus
-            when 'Proposed' then 2
+        case itemStatus.code
             when 'Approved' then 3
             when 'Rejected' then 1
+            when 'Proposed' then 2
             else 0
         end as itemStatusCriticality : Integer,
         virtual null as quantityFieldControl : Integer,
@@ -125,7 +121,6 @@ service RepairService {
         { grant: 'getAvailableSubstitutes', to: 'Mechanic' },
         { grant: ['READ','CREATE','UPDATE'], to: 'Manager' }
     ])
-    @odata.draft.enabled
     @cds.redirection.target
     entity Stocks          as projection on db.Stocks
         actions {
@@ -143,7 +138,6 @@ service RepairService {
         { grant: 'READ', to: 'Mechanic' },
         { grant: ['READ','CREATE','UPDATE'], to: 'Manager' }
     ])
-    @odata.draft.enabled
     entity ServicesOffered as projection on db.OfferedServices;
 
     @readonly
@@ -161,6 +155,13 @@ service RepairService {
 
 annotate RepairService.Stocks          with { modifiedAt @odata.etag; };
 annotate RepairService.ServicesOffered with { modifiedAt @odata.etag; };
+
+annotate RepairService.Appointments with {
+    status @readonly;
+};
+annotate RepairService.Appointments.Items with {
+    itemStatus @readonly;
+};
 
 annotate RepairService.Appointments with actions {
     addPart @(

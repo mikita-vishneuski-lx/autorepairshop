@@ -25,6 +25,7 @@ import com.sap.cds.services.handler.annotations.HandlerOrder;
 import com.sap.cds.services.handler.annotations.ServiceName;
 import com.sap.cds.services.persistence.PersistenceService;
 
+import cds.gen.com.sap.autorepair.AppointmentItemStatusCode;
 import cds.gen.com.sap.autorepair.ItemType;
 import cds.gen.repairservice.Appointments;
 import cds.gen.repairservice.AppointmentsItems;
@@ -38,7 +39,6 @@ import cds.gen.repairservice.Stocks_;
 @ServiceName(RepairService_.CDS_NAME)
 public class StockReservationHandler implements EventHandler {
 
-    private static final String STATUS_REJECTED = "Rejected";
     private static final int LOCK_TIMEOUT_SECONDS = 10;
 
     private final PersistenceService db;
@@ -128,7 +128,7 @@ public class StockReservationHandler implements EventHandler {
         if (item.getStockItemId() == null) {
             return false;
         }
-        if (STATUS_REJECTED.equals(item.getItemStatus())) {
+        if (AppointmentItemStatusCode.REJECTED.equals(item.getItemStatusCode())) {
             return false;
         }
         return reservedQty(item).signum() > 0;

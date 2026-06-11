@@ -36,10 +36,15 @@ import com.sap.cds.services.handler.annotations.ServiceName;
 import com.sap.cds.services.persistence.PersistenceService;
 import com.sap.cds.services.request.UserInfo;
 
+import cds.gen.com.sap.autorepair.AppointmentItemStatusCode;
+import cds.gen.com.sap.autorepair.AppointmentItemStatuses;
+import cds.gen.com.sap.autorepair.AppointmentItemStatuses_;
+import cds.gen.com.sap.autorepair.AppointmentStatusCode;
 import cds.gen.com.sap.autorepair.ItemType;
 import cds.gen.repairservice.Appointments;
 import cds.gen.repairservice.AppointmentsAddPartContext;
 import cds.gen.repairservice.AppointmentsAddWorkContext;
+import cds.gen.repairservice.AppointmentsApproveAllItemsContext;
 import cds.gen.repairservice.AppointmentsCancelContext;
 import cds.gen.repairservice.AppointmentsCloseContext;
 import cds.gen.repairservice.AppointmentsCompleteContext;
@@ -47,6 +52,7 @@ import cds.gen.repairservice.AppointmentsItems;
 import cds.gen.repairservice.AppointmentsItems_;
 import cds.gen.repairservice.AppointmentsItemsApproveItemContext;
 import cds.gen.repairservice.AppointmentsItemsRejectItemContext;
+import cds.gen.repairservice.AppointmentsRejectAllItemsContext;
 import cds.gen.repairservice.AppointmentsRequestApprovalContext;
 import cds.gen.repairservice.AppointmentsStartInspectionContext;
 import cds.gen.repairservice.Appointments_;
@@ -58,35 +64,23 @@ import cds.gen.repairservice.RepairService_;
 @ServiceName(RepairService_.CDS_NAME)
 public class AppointmentHandler implements EventHandler {
 
-    static final String STATUS_CREATED              = "Created";
-    static final String STATUS_INSPECTION           = "Inspection";
-    static final String STATUS_WAITING_FOR_APPROVAL = "Waiting for approval";
-    static final String STATUS_IN_PROGRESS          = "In Progress";
-    static final String STATUS_COMPLETED            = "Completed";
-    static final String STATUS_CLOSED               = "Closed";
-    static final String STATUS_CANCELLED            = "Cancelled";
-
-    static final String ITEM_PROPOSED = "Proposed";
-    static final String ITEM_APPROVED = "Approved";
-    static final String ITEM_REJECTED = "Rejected";
-
-    private static final Set<String> CANCELLABLE_STATES =
-            Set.of(STATUS_CREATED, STATUS_INSPECTION, STATUS_WAITING_FOR_APPROVAL);
-
     private final PersistenceService db;
     private final DraftService draftService;
+    private final AppointmentWorkflowService workflowService;
 
     public AppointmentHandler(PersistenceService db,
-                              @Qualifier(RepairService_.CDS_NAME) DraftService draftService) {
+                              @Qualifier(RepairService_.CDS_NAME) DraftService draftService,
+                              AppointmentWorkflowService workflowService) {
         this.db = db;
         this.draftService = draftService;
+        this.workflowService = workflowService;
     }
 
     @On(event = AppointmentsStartInspectionContext.CDS_NAME, entity = Appointments_.CDS_NAME)
     public void onStartInspection(AppointmentsStartInspectionContext context) {
         context.setResult(transition(context, context.getCqn(),
                 AppointmentSecurityHandler.ROLE_MANAGER,
-                STATUS_CREATED, STATUS_INSPECTION,
+                AppointmentStatusCode.INSPECTION,
                 "Inspection can only be started for newly created appointments",
                 null));
         context.setCompleted();
@@ -96,7 +90,7 @@ public class AppointmentHandler implements EventHandler {
     public void onRequestApproval(AppointmentsRequestApprovalContext context) {
         context.setResult(transition(context, context.getCqn(),
                 AppointmentSecurityHandler.ROLE_MECHANIC,
-                STATUS_INSPECTION, STATUS_WAITING_FOR_APPROVAL,
+                AppointmentStatusCode.WAITING_FOR_APPROVAL,
                 "Approval can only be requested while the appointment is under inspection",
                 null));
         context.setCompleted();
@@ -106,7 +100,7 @@ public class AppointmentHandler implements EventHandler {
     public void onComplete(AppointmentsCompleteContext context) {
         context.setResult(transition(context, context.getCqn(),
                 AppointmentSecurityHandler.ROLE_MECHANIC,
-                STATUS_IN_PROGRESS, STATUS_COMPLETED,
+                AppointmentStatusCode.COMPLETED,
                 "Only in-progress appointments can be marked as completed",
                 (id, isActive) -> createWorkItemMasterLogs(id, isActive)));
         context.setCompleted();
@@ -116,7 +110,7 @@ public class AppointmentHandler implements EventHandler {
     public void onClose(AppointmentsCloseContext context) {
         context.setResult(transition(context, context.getCqn(),
                 AppointmentSecurityHandler.ROLE_MECHANIC,
-                STATUS_COMPLETED, STATUS_CLOSED,
+                AppointmentStatusCode.CLOSED,
                 "Only completed appointments can be closed",
                 null));
         context.setCompleted();
@@ -132,11 +126,10 @@ public class AppointmentHandler implements EventHandler {
         String id = extractAppointmentId(context.getCqn(), context.getModel());
         ensureClientOwnership(context, id);
         String current = loadStatus(id, isActive);
-        if (current == null || !CANCELLABLE_STATES.contains(current)) {
-            throw badRequest("Appointment cannot be cancelled once work has started or finished");
-        }
+        workflowService.assertAppointmentTransition(current, AppointmentStatusCode.CANCELLED,
+                "Appointment cannot be cancelled once work has started or finished");
         runPrivileged(context, () -> {
-            updateAppointmentStatus(id, isActive, STATUS_CANCELLED);
+            updateAppointmentStatus(id, isActive, AppointmentStatusCode.CANCELLED);
             rejectOpenPartItemsInDraft(id);
         });
         context.setResult(loadAppointment(id, isActive));
@@ -165,13 +158,25 @@ public class AppointmentHandler implements EventHandler {
 
     @On(event = AppointmentsItemsApproveItemContext.CDS_NAME, entity = AppointmentsItems_.CDS_NAME)
     public void onApproveItem(AppointmentsItemsApproveItemContext context) {
-        context.setResult(decideItem(context, context.getCqn(), ITEM_APPROVED));
+        context.setResult(decideItem(context, context.getCqn(), AppointmentItemStatusCode.APPROVED));
         context.setCompleted();
     }
 
     @On(event = AppointmentsItemsRejectItemContext.CDS_NAME, entity = AppointmentsItems_.CDS_NAME)
     public void onRejectItem(AppointmentsItemsRejectItemContext context) {
-        context.setResult(decideItem(context, context.getCqn(), ITEM_REJECTED));
+        context.setResult(decideItem(context, context.getCqn(), AppointmentItemStatusCode.REJECTED));
+        context.setCompleted();
+    }
+
+    @On(event = AppointmentsApproveAllItemsContext.CDS_NAME, entity = Appointments_.CDS_NAME)
+    public void onApproveAllItems(AppointmentsApproveAllItemsContext context) {
+        context.setResult(decideAllItems(context, context.getCqn(), AppointmentItemStatusCode.APPROVED));
+        context.setCompleted();
+    }
+
+    @On(event = AppointmentsRejectAllItemsContext.CDS_NAME, entity = Appointments_.CDS_NAME)
+    public void onRejectAllItems(AppointmentsRejectAllItemsContext context) {
+        context.setResult(decideAllItems(context, context.getCqn(), AppointmentItemStatusCode.REJECTED));
         context.setCompleted();
     }
 
@@ -220,25 +225,24 @@ public class AppointmentHandler implements EventHandler {
                 .filter(Objects::nonNull)
                 .collect(Collectors.toSet());
         for (String parentId : parentIds) {
-            if (!STATUS_IN_PROGRESS.equals(loadDraftStatus(parentId))) {
+            if (!AppointmentStatusCode.IN_PROGRESS.equals(loadDraftStatus(parentId))) {
                 continue;
             }
             runPrivileged(context, () -> draftService.patchDraft(Update.entity(Appointments_.class)
-                    .data(Appointments.STATUS, STATUS_WAITING_FOR_APPROVAL)
+                    .data(Appointments.STATUS_CODE, AppointmentStatusCode.WAITING_FOR_APPROVAL)
                     .where(a -> a.ID().eq(parentId).and(a.IsActiveEntity().eq(false)))));
         }
     }
 
     private Appointments transition(EventContext context, CqnSelect cqn,
-                                    String requiredRole, String fromStatus, String toStatus,
+                                    String requiredRole, String toStatus,
                                     String wrongStatusMsg, BiConsumer<String, Boolean> postAction) {
         requireAnyRole(context, requiredRole);
         boolean isActive = extractIsActive(cqn, context.getModel());
         requireDraft(isActive);
         String id = extractAppointmentId(cqn, context.getModel());
-        if (!fromStatus.equals(loadStatus(id, isActive))) {
-            throw badRequest(wrongStatusMsg);
-        }
+        String current = loadStatus(id, isActive);
+        workflowService.assertAppointmentTransition(current, toStatus, wrongStatusMsg);
         runPrivileged(context, () -> {
             updateAppointmentStatus(id, isActive, toStatus);
             if (postAction != null) {
@@ -254,17 +258,56 @@ public class AppointmentHandler implements EventHandler {
         requireDraft(key.isActive());
         AppointmentsItems item = loadItem(key);
         ensureClientOwnership(context, item.getParentId());
-        if (!STATUS_WAITING_FOR_APPROVAL.equals(loadStatus(item.getParentId(), key.isActive()))) {
+        if (!AppointmentStatusCode.WAITING_FOR_APPROVAL.equals(loadStatus(item.getParentId(), key.isActive()))) {
             throw badRequest("Items can only be decided while the appointment is waiting for approval");
         }
-        if (!ITEM_PROPOSED.equals(item.getItemStatus())) {
-            throw badRequest("Item has already been decided (current: '" + item.getItemStatus() + "')");
-        }
+        workflowService.assertItemTransition(item.getItemStatusCode(), newStatus,
+                "Item has already been decided (current: '" + item.getItemStatusCode() + "')");
         runPrivileged(context, () -> {
             updateItemStatus(key, newStatus);
             recomputeAppointmentStatus(item.getParentId(), key.isActive());
         });
-        return loadItem(key);
+        AppointmentsItems updated = loadItem(key);
+        updated.setItemStatusCriticality(loadItemStatusCriticality(newStatus));
+        return updated;
+    }
+
+    private Appointments decideAllItems(EventContext context, CqnSelect cqn, String newStatus) {
+        requireAnyRole(context, AppointmentSecurityHandler.ROLE_CLIENT);
+        boolean isActive = extractIsActive(cqn, context.getModel());
+        requireDraft(isActive);
+        String id = extractAppointmentId(cqn, context.getModel());
+        ensureClientOwnership(context, id);
+        if (!AppointmentStatusCode.WAITING_FOR_APPROVAL.equals(loadStatus(id, isActive))) {
+            throw badRequest("Items can only be decided while the appointment is waiting for approval");
+        }
+        List<AppointmentsItems> pending = draftService.run(Select.from(AppointmentsItems_.class)
+                        .where(i -> i.parent_ID().eq(id)
+                                .and(i.IsActiveEntity().eq(false))
+                                .and(i.itemStatus_code().eq(AppointmentItemStatusCode.PROPOSED))))
+                .listOf(AppointmentsItems.class);
+        if (pending.isEmpty()) {
+            throw badRequest("No items are pending decision");
+        }
+        runPrivileged(context, () -> {
+            for (AppointmentsItems item : pending) {
+                updateItemStatus(new ItemKey(id, item.getPos(), false), newStatus);
+            }
+            recomputeAppointmentStatus(id, false);
+        });
+        return loadAppointment(id, isActive);
+    }
+
+    private Integer loadItemStatusCriticality(String code) {
+        if (code == null) {
+            return null;
+        }
+        return db.run(Select.from(AppointmentItemStatuses_.class)
+                        .columns(s -> s.criticality())
+                        .where(s -> s.code().eq(code)))
+                .first(AppointmentItemStatuses.class)
+                .map(AppointmentItemStatuses::getCriticality)
+                .orElse(null);
     }
 
     private AppointmentsItems addLineItem(EventContext context, String stockId, String serviceId) {
@@ -274,7 +317,7 @@ public class AppointmentHandler implements EventHandler {
         requireDraft(isActive);
         String parentId = extractAppointmentId(cqn, context.getModel());
         String status = loadStatus(parentId, isActive);
-        if (!STATUS_INSPECTION.equals(status) && !STATUS_IN_PROGRESS.equals(status)) {
+        if (!AppointmentStatusCode.INSPECTION.equals(status) && !AppointmentStatusCode.IN_PROGRESS.equals(status)) {
             throw badRequest("Items can only be added while the appointment is under inspection or in progress");
         }
         int[] pos = new int[1];
@@ -334,11 +377,11 @@ public class AppointmentHandler implements EventHandler {
         for (AppointmentsItems it : draftItems) {
             if (it.getPos() == null
                     || !ItemType.PART.equals(it.getType())
-                    || ITEM_REJECTED.equals(it.getItemStatus())) {
+                    || AppointmentItemStatusCode.REJECTED.equals(it.getItemStatusCode())) {
                 continue;
             }
             draftService.run(Update.entity(AppointmentsItems_.class)
-                    .data(AppointmentsItems.ITEM_STATUS, ITEM_REJECTED)
+                    .data(AppointmentsItems.ITEM_STATUS_CODE, AppointmentItemStatusCode.REJECTED)
                     .where(a -> a.parent_ID().eq(parentId)
                             .and(a.pos().eq(it.getPos()))
                             .and(a.IsActiveEntity().eq(false))));
@@ -349,18 +392,18 @@ public class AppointmentHandler implements EventHandler {
         String draftStatus = loadDraftStatus(id);
         if (draftStatus != null) {
             db.run(Update.entity(Appointments_.class)
-                    .data(Appointments.STATUS, draftStatus)
+                    .data(Appointments.STATUS_CODE, draftStatus)
                     .where(a -> a.ID().eq(id).and(a.IsActiveEntity().eq(true))));
         }
         List<AppointmentsItems> items = draftService.run(Select.from(AppointmentsItems_.class)
                         .where(i -> i.parent_ID().eq(id).and(i.IsActiveEntity().eq(false))))
                 .listOf(AppointmentsItems.class);
         for (AppointmentsItems it : items) {
-            if (it.getItemStatus() == null || it.getPos() == null) {
+            if (it.getItemStatusCode() == null || it.getPos() == null) {
                 continue;
             }
             db.run(Update.entity(AppointmentsItems_.class)
-                    .data(AppointmentsItems.ITEM_STATUS, it.getItemStatus())
+                    .data(AppointmentsItems.ITEM_STATUS_CODE, it.getItemStatusCode())
                     .where(a -> a.parent_ID().eq(id)
                             .and(a.pos().eq(it.getPos()))
                             .and(a.IsActiveEntity().eq(true))));
@@ -489,7 +532,7 @@ public class AppointmentHandler implements EventHandler {
 
     private void updateItemStatus(ItemKey key, String newStatus) {
         var update = Update.entity(AppointmentsItems_.class)
-                .data(AppointmentsItems.ITEM_STATUS, newStatus)
+                .data(AppointmentsItems.ITEM_STATUS_CODE, newStatus)
                 .where(i -> i.parent_ID().eq(key.parentId())
                         .and(i.pos().eq(key.pos()))
                         .and(i.IsActiveEntity().eq(key.isActive())));
@@ -509,16 +552,17 @@ public class AppointmentHandler implements EventHandler {
         if (items.isEmpty()) {
             return;
         }
-        if (items.stream().anyMatch(i -> ITEM_PROPOSED.equals(i.getItemStatus()))) {
+        if (items.stream().anyMatch(i -> AppointmentItemStatusCode.PROPOSED.equals(i.getItemStatusCode()))) {
             return;
         }
-        boolean anyApproved = items.stream().anyMatch(i -> ITEM_APPROVED.equals(i.getItemStatus()));
-        updateAppointmentStatus(appointmentId, isActive, anyApproved ? STATUS_IN_PROGRESS : STATUS_CANCELLED);
+        boolean anyApproved = items.stream().anyMatch(i -> AppointmentItemStatusCode.APPROVED.equals(i.getItemStatusCode()));
+        updateAppointmentStatus(appointmentId, isActive,
+                anyApproved ? AppointmentStatusCode.IN_PROGRESS : AppointmentStatusCode.CANCELLED);
     }
 
     private void updateAppointmentStatus(String id, boolean isActive, String newStatus) {
         var update = Update.entity(Appointments_.class)
-                .data(Appointments.STATUS, newStatus)
+                .data(Appointments.STATUS_CODE, newStatus)
                 .where(a -> a.ID().eq(id).and(a.IsActiveEntity().eq(isActive)));
         if (isActive) {
             db.run(update);
@@ -530,19 +574,19 @@ public class AppointmentHandler implements EventHandler {
     private String loadStatus(String id, boolean isActive) {
         var service = isActive ? db : draftService;
         return service.run(Select.from(Appointments_.class)
-                        .columns(a -> a.status())
+                        .columns(a -> a.status_code())
                         .where(a -> a.ID().eq(id).and(a.IsActiveEntity().eq(isActive))))
                 .first(Appointments.class)
-                .map(Appointments::getStatus)
+                .map(Appointments::getStatusCode)
                 .orElseThrow(() -> new ServiceException(ErrorStatuses.NOT_FOUND, "Appointment not found: " + id));
     }
 
     private String loadDraftStatus(String parentId) {
         return draftService.run(Select.from(Appointments_.class)
-                        .columns(a -> a.status())
+                        .columns(a -> a.status_code())
                         .where(a -> a.ID().eq(parentId).and(a.IsActiveEntity().eq(false))))
                 .first(Appointments.class)
-                .map(Appointments::getStatus)
+                .map(Appointments::getStatusCode)
                 .orElse(null);
     }
 

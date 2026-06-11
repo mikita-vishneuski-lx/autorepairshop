@@ -150,7 +150,7 @@ public class RepairServiceIT {
 
         mockMvc.perform(get(parentUrl))
                .andExpect(status().isOk())
-               .andExpect(jsonPath("$.status").value("Cancelled"));
+               .andExpect(jsonPath("$.status_code").value("Cancelled"));
     }
 
     @Test
@@ -169,7 +169,7 @@ public class RepairServiceIT {
                .content("{}"))
                .andDo(print())
                .andExpect(status().isOk())
-               .andExpect(jsonPath("$.itemStatus").value("Approved"));
+               .andExpect(jsonPath("$.itemStatus_code").value("Approved"));
     }
 
     @Test
@@ -202,13 +202,13 @@ public class RepairServiceIT {
                .andExpect(status().is2xxSuccessful());
 
         mockMvc.perform(get(parentUrl))
-               .andExpect(jsonPath("$.status").value("In Progress"));
+               .andExpect(jsonPath("$.status_code").value("In Progress"));
     }
 
     @Test
     @WithMockUser(username = "bob", roles = "Mechanic")
     public void testGetAvailableSubstitutesFunction() throws Exception {
-              String functionUrl = "/odata/v4/RepairService/Stocks(ID=" + STOCK_BRAKE_PAD_ORIGINAL_ID + ",IsActiveEntity=true)/getAvailableSubstitutes()";
+              String functionUrl = "/odata/v4/RepairService/Stocks(" + STOCK_BRAKE_PAD_ORIGINAL_ID + ")/getAvailableSubstitutes()";
 
         mockMvc.perform(get(functionUrl).header("If-Match", "*"))
                .andDo(print())
@@ -261,7 +261,7 @@ public class RepairServiceIT {
                .contentType(MediaType.APPLICATION_JSON)
                .content("{}"))
                .andExpect(status().isOk())
-               .andExpect(jsonPath("$.status").value("Completed"));
+               .andExpect(jsonPath("$.status_code").value("Completed"));
 
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                .post(draftActivateUrl)
@@ -314,14 +314,14 @@ public class RepairServiceIT {
                .contentType(MediaType.APPLICATION_JSON)
                .content("{}"))
                .andExpect(status().isOk())
-               .andExpect(jsonPath("$.itemStatus").value("Approved"));
+               .andExpect(jsonPath("$.itemStatus_code").value("Approved"));
 
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                .post(approvePartDraftUrl)
                .contentType(MediaType.APPLICATION_JSON)
                .content("{}"))
                .andExpect(status().isOk())
-               .andExpect(jsonPath("$.itemStatus").value("Approved"));
+               .andExpect(jsonPath("$.itemStatus_code").value("Approved"));
 
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
                .post(draftActivateUrl)
@@ -333,15 +333,15 @@ public class RepairServiceIT {
         mockMvc.perform(get(activeParentUrl))
                .andDo(print())
                .andExpect(status().isOk())
-               .andExpect(jsonPath("$.status").value("In Progress"));
+               .andExpect(jsonPath("$.status_code").value("In Progress"));
 
         String activeItemsUrl = "/odata/v4/RepairService/Appointments_Items?$filter=parent_ID eq "
                 + APPOINTMENT_OIL_SERVICE_ID + " and IsActiveEntity eq true";
         mockMvc.perform(get(activeItemsUrl))
                .andDo(print())
                .andExpect(status().isOk())
-               .andExpect(jsonPath("$.value[?(@.pos==10)].itemStatus").value("Approved"))
-               .andExpect(jsonPath("$.value[?(@.pos==20)].itemStatus").value("Approved"));
+               .andExpect(jsonPath("$.value[?(@.pos==10)].itemStatus_code").value("Approved"))
+               .andExpect(jsonPath("$.value[?(@.pos==20)].itemStatus_code").value("Approved"));
     }
 
     @Test

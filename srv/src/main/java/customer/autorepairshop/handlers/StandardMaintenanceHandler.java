@@ -22,6 +22,7 @@ import com.sap.cds.services.handler.annotations.On;
 import com.sap.cds.services.handler.annotations.ServiceName;
 import com.sap.cds.services.persistence.PersistenceService;
 
+import cds.gen.com.sap.autorepair.AppointmentStatusCode;
 import cds.gen.repairservice.Appointments;
 import cds.gen.repairservice.AppointmentsApplyStandardMaintenanceContext;
 import cds.gen.repairservice.AppointmentsItems;
@@ -70,7 +71,7 @@ public class StandardMaintenanceHandler implements EventHandler {
         }
         String appointmentId = String.valueOf(idValue);
         Appointments appointment = loadDraftAppointment(appointmentId);
-        if (!AppointmentHandler.STATUS_INSPECTION.equals(appointment.getStatus())) {
+        if (!AppointmentStatusCode.INSPECTION.equals(appointment.getStatusCode())) {
             throw new ServiceException(ErrorStatuses.BAD_REQUEST,
                     "Standard Maintenance can only be applied while the appointment is under inspection.");
         }

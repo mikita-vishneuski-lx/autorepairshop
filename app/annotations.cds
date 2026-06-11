@@ -10,21 +10,12 @@ annotate RepairService.Appointments.Items with {
     duration          @title: 'Hours'     @Common.FieldControl: durationFieldControl;
     totalPrice        @title: 'Total'     @Core.Computed: true
                       @Measures.ISOCurrency: currency_code;
-    currency_code     @Core.Computed: true;
+    currency         @Core.Computed: true;
     confirmedByClient @UI.Hidden;
     canApproveItem    @UI.Hidden;
     canRejectItem     @UI.Hidden;
-    itemStatus        @title: 'Decision'
-                      @Common.FieldControl: #ReadOnly
-                      @Common.ValueListWithFixedValues: true
-                      @Common.ValueList: {
-                          CollectionPath: 'AppointmentItemStatuses',
-                          Parameters    : [
-                              { $Type: 'Common.ValueListParameterInOut',
-                                LocalDataProperty: itemStatus,
-                                ValueListProperty: 'code' }
-                          ]
-                      };
+    itemStatus       @title: 'Decision'
+                      @Common.FieldControl: #ReadOnly;
     quantityFieldControl  @UI.Hidden;
     durationFieldControl  @UI.Hidden;
     typeFieldControl      @UI.Hidden;
@@ -45,6 +36,10 @@ annotate RepairService.Appointments.Items with @(
         TargetProperties: ['totalPrice'],
         TargetEntities  : [parent]
     },
+    Common.SideEffects #itemStatusCrit: {
+        SourceProperties: [itemStatus_code],
+        TargetProperties: ['itemStatusCriticality']
+    },
     UI.LineItem    : [
         {Value: type},
         {Value: description},
@@ -52,7 +47,7 @@ annotate RepairService.Appointments.Items with @(
         {Value: quantity},
         {Value: duration},
         {Value: totalPrice},
-        {Value: itemStatus,        Criticality: itemStatusCriticality},
+        {Value: itemStatus_code,   Criticality: itemStatusCriticality},
         {
             $Type        : 'UI.DataFieldForAction',
             Action       : 'RepairService.approveItem',
@@ -74,15 +69,17 @@ annotate RepairService.Appointments.Items with actions {
     approveItem
     @Core.OperationAvailable: { $edmJson: { $Path: '_it/canApproveItem' } }
     @Common.SideEffects: {
-        TargetProperties: ['_it/itemStatus', '_it/itemStatusCriticality'],
-        TargetEntities  : ['_it/parent', '_it/parent/items']
+        TargetProperties: ['_it/itemStatus_code', '_it/itemStatusCriticality',
+                           '_it/parent/status_code', '_it/parent/statusCriticality'],
+        TargetEntities  : ['_it', '_it/parent', '_it/parent/items']
     };
 
     rejectItem
     @Core.OperationAvailable: { $edmJson: { $Path: '_it/canRejectItem' } }
     @Common.SideEffects: {
-        TargetProperties: ['_it/itemStatus', '_it/itemStatusCriticality'],
-        TargetEntities  : ['_it/parent', '_it/parent/items']
+        TargetProperties: ['_it/itemStatus_code', '_it/itemStatusCriticality',
+                           '_it/parent/status_code', '_it/parent/statusCriticality'],
+        TargetEntities  : ['_it', '_it/parent', '_it/parent/items']
     }
 };
 
@@ -120,6 +117,18 @@ annotate RepairService.Appointments with @(UI: {
         },
         {
             $Type        : 'UI.DataFieldForAction',
+            Action       : 'RepairService.approveAllItems',
+            Label        : 'Approve All',
+            ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canApproveAllItems' } } }
+        },
+        {
+            $Type        : 'UI.DataFieldForAction',
+            Action       : 'RepairService.rejectAllItems',
+            Label        : 'Reject All',
+            ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canRejectAllItems' } } }
+        },
+        {
+            $Type        : 'UI.DataFieldForAction',
             Action       : 'RepairService.applyStandardMaintenance',
             Label        : 'Standard Maintenance',
             ![@UI.Hidden]: { $edmJson: { $Not: { $Path: 'canApplyStandardMaintenance' } } }
@@ -147,7 +156,7 @@ annotate RepairService.Appointments with @(UI: {
         {Value: appointmentNo},
         {Value: carNumber},
         {Value: brand},
-        {Value: status,       Criticality: statusCriticality},
+        {Value: status_code,  Criticality: statusCriticality},
         {
             $Type : 'UI.DataFieldForAnnotation',
             Target: '@UI.Chart#CostsBullet',
@@ -233,7 +242,7 @@ annotate RepairService.Appointments with @(UI: {
         {Value: appointmentNo},
         {Value: description},
         {Value: estimatedAmount},
-        {Value: status}
+        {Value: status_code}
     ]},
 
     FieldGroup #CarInfo        : {Data: [
@@ -243,6 +252,13 @@ annotate RepairService.Appointments with @(UI: {
         {Value: productionYear}
     ]}
 });
+
+annotate RepairService.Appointments with @(
+    Common.SideEffects #statusCrit: {
+        SourceProperties: [status_code],
+        TargetProperties: ['statusCriticality']
+    }
+);
 
 annotate RepairService.Appointments with {
     appointmentNo     @title       : 'Appointment No.'
@@ -264,16 +280,7 @@ annotate RepairService.Appointments with {
                       @UI.MultiLineText
                       @Core.Description: 'What needs to be done (max 1000 chars)';
     status            @title       : 'Status'
-                      @Common.FieldControl: #ReadOnly
-                      @Common.ValueListWithFixedValues: true
-                      @Common.ValueList: {
-                          CollectionPath: 'AppointmentStatuses',
-                          Parameters    : [
-                              { $Type: 'Common.ValueListParameterInOut',
-                                LocalDataProperty: status,
-                                ValueListProperty: 'code' }
-                          ]
-                      };
+                      @Common.FieldControl: #ReadOnly;
     estimatedAmount   @title       : 'Budget'
                       @Common.FieldControl: headerFieldControl
                       @Core.Description: 'Quoted price agreed with the client';
@@ -302,23 +309,23 @@ annotate RepairService.Appointments with actions {
 
     startInspection
     @Core.OperationAvailable: { $edmJson: { $Path: 'in/canStartInspection' } }
-    @Common.SideEffects: { TargetProperties: ['in/status', 'in/statusCriticality'] };
+    @Common.SideEffects: { TargetProperties: ['in/status_code', 'in/statusCriticality'] };
 
     requestApproval
     @Core.OperationAvailable: { $edmJson: { $Path: 'in/canRequestApproval' } }
-    @Common.SideEffects: { TargetProperties: ['in/status', 'in/statusCriticality'] };
+    @Common.SideEffects: { TargetProperties: ['in/status_code', 'in/statusCriticality'] };
 
     complete
     @Core.OperationAvailable: { $edmJson: { $Path: 'in/canComplete' } }
-    @Common.SideEffects: { TargetProperties: ['in/status', 'in/statusCriticality'] };
+    @Common.SideEffects: { TargetProperties: ['in/status_code', 'in/statusCriticality'] };
 
     close
     @Core.OperationAvailable: { $edmJson: { $Path: 'in/canClose' } }
-    @Common.SideEffects: { TargetProperties: ['in/status', 'in/statusCriticality'] };
+    @Common.SideEffects: { TargetProperties: ['in/status_code', 'in/statusCriticality'] };
 
     cancel
     @Core.OperationAvailable: { $edmJson: { $Path: 'in/canCancel' } }
-    @Common.SideEffects: { TargetProperties: ['in/status', 'in/statusCriticality'] };
+    @Common.SideEffects: { TargetProperties: ['in/status_code', 'in/statusCriticality'] };
 
     addPart
     @Core.OperationAvailable: { $edmJson: { $Path: 'in/canAddItems' } }
@@ -326,7 +333,21 @@ annotate RepairService.Appointments with actions {
 
     addWork
     @Core.OperationAvailable: { $edmJson: { $Path: 'in/canAddItems' } }
-    @Common.SideEffects: { TargetEntities: [items], TargetProperties: [totalAmount] }
+    @Common.SideEffects: { TargetEntities: [items], TargetProperties: [totalAmount] };
+
+    approveAllItems
+    @Core.OperationAvailable: { $edmJson: { $Path: 'in/canApproveAllItems' } }
+    @Common.SideEffects: {
+        TargetEntities  : ['in/items'],
+        TargetProperties: ['in/status_code', 'in/statusCriticality']
+    };
+
+    rejectAllItems
+    @Core.OperationAvailable: { $edmJson: { $Path: 'in/canRejectAllItems' } }
+    @Common.SideEffects: {
+        TargetEntities  : ['in/items'],
+        TargetProperties: ['in/status_code', 'in/statusCriticality']
+    }
 };
 
 annotate RepairService.Stocks with {
@@ -339,7 +360,7 @@ annotate RepairService.Stocks with {
     quantity      @title: 'Stock Qty';
     price         @title: 'Price'
                   @Measures.ISOCurrency: currency_code;
-    currency_code @title: 'Currency';
+    currency      @title: 'Currency';
     original      @title: 'Original Part'
                   @Common.ValueList: {
                       CollectionPath: 'OriginalStocks',
@@ -424,7 +445,7 @@ annotate RepairService.ServicesOffered with {
     name          @title: 'Name';
     standardHour  @title: 'Hourly Rate'
                   @Measures.ISOCurrency: currency_code;
-    currency_code @title: 'Currency';
+    currency      @title: 'Currency';
     createdAt     @title: 'Created';
     createdBy     @title: 'Created By';
     modifiedAt    @title: 'Last Changed';

@@ -35,11 +35,14 @@ public class AppointmentTotalSumHandler implements EventHandler{
 
     private final PersistenceService db;
     private final DraftService draftService;
+    private final PricingService pricingService;
 
     public AppointmentTotalSumHandler(PersistenceService db,
-                                      @Qualifier(RepairService_.CDS_NAME) DraftService draftService) {
+                                      @Qualifier(RepairService_.CDS_NAME) DraftService draftService,
+                                      PricingService pricingService) {
         this.db = db;
         this.draftService = draftService;
+        this.pricingService = pricingService;
     }
 
     @After(event = {CqnService.EVENT_CREATE, CqnService.EVENT_UPDATE},
@@ -105,7 +108,7 @@ public class AppointmentTotalSumHandler implements EventHandler{
 
         var appointmentItems = db.run(selectItems).listOf(AppointmentsItems.class);
 
-        BigDecimal totalSum = sumOf(appointmentItems);
+        BigDecimal totalSum = pricingService.sumLines(appointmentItems);
 
         db.run(Update.entity(Appointments_.class)
                  .data(Appointments.TOTAL_AMOUNT, totalSum)
@@ -119,17 +122,11 @@ public class AppointmentTotalSumHandler implements EventHandler{
                                     .and(i.IsActiveEntity().eq(false))))
                     .listOf(AppointmentsItems.class);
 
-            BigDecimal totalSum = sumOf(draftItems);
+            BigDecimal totalSum = pricingService.sumLines(draftItems);
 
             draftService.patchDraft(Update.entity(Appointments_.class)
                     .data(Appointments.TOTAL_AMOUNT, totalSum)
                     .where(a -> a.ID().eq(appointmentId).and(a.IsActiveEntity().eq(false))));
         });
-    }
-
-    private static BigDecimal sumOf(List<AppointmentsItems> items) {
-        return items.stream()
-                .map(ItemPricingHandler::lineTotal)
-                .reduce(BigDecimal.ZERO, BigDecimal::add);
     }
 }

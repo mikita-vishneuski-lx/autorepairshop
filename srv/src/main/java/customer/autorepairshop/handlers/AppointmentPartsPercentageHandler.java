@@ -1,7 +1,5 @@
 package customer.autorepairshop.handlers;
 
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -27,13 +25,12 @@ import cds.gen.repairservice.RepairService_;
 @ServiceName(RepairService_.CDS_NAME)
 public class AppointmentPartsPercentageHandler implements EventHandler {
 
-    private static final BigDecimal HUNDRED = BigDecimal.valueOf(100);
-    private static final String PART_TYPE = "Part";
-
     private final PersistenceService db;
+    private final PricingService pricingService;
 
-    public AppointmentPartsPercentageHandler(PersistenceService db) {
+    public AppointmentPartsPercentageHandler(PersistenceService db, PricingService pricingService) {
         this.db = db;
+        this.pricingService = pricingService;
     }
 
     @After(event = CqnService.EVENT_READ, entity = Appointments_.CDS_NAME)
@@ -60,31 +57,8 @@ public class AppointmentPartsPercentageHandler implements EventHandler {
                 .collect(Collectors.groupingBy(AppointmentsItems::getParentId));
 
         for (Appointments appointment : appointments) {
-            appointment.setPartsPercentage(calculate(byParent.getOrDefault(appointment.getId(), List.of())));
+            appointment.setPartsPercentage(
+                    pricingService.partsRatio(byParent.getOrDefault(appointment.getId(), List.of())));
         }
-    }
-
-    private Integer calculate(List<AppointmentsItems> items) {
-        BigDecimal total = BigDecimal.ZERO;
-        BigDecimal parts = BigDecimal.ZERO;
-
-        for (AppointmentsItems item : items) {
-            BigDecimal lineTotal = ItemPricingHandler.lineTotal(item);
-            if (lineTotal.signum() == 0) {
-                continue;
-            }
-            total = total.add(lineTotal);
-            if (PART_TYPE.equals(item.getType())) {
-                parts = parts.add(lineTotal);
-            }
-        }
-
-        if (total.signum() == 0) {
-            return 0;
-        }
-
-        return parts.multiply(HUNDRED)
-                .divide(total, 0, RoundingMode.HALF_UP)
-                .intValue();
     }
 }

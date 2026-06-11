@@ -1,8 +1,8 @@
-code;name;descr
-Created;Created;Newly created appointment
-Inspection;Inspection;Vehicle is being inspected by the mechanic
-Waiting for approval;Waiting for approval;Quote ready, waiting for the client to approve
-In Progress;In Progress;Repair work is in progress
-Completed;Completed;All work and parts are done
-Closed;Closed;Client has picked up the vehicle
-Cancelled;Cancelled;Appointment was cancelled
+code;name;descr;criticality;sequence;isTerminal
+Created;Created;Newly created appointment;5;10;false
+Inspection;Inspection;Vehicle is being inspected by the mechanic;2;20;false
+Waiting for approval;Waiting for approval;Quote ready, waiting for the client to approve;2;30;false
+In Progress;In Progress;Repair work is in progress;0;40;false
+Completed;Completed;All work and parts are done;3;50;false
+Closed;Closed;Client has picked up the vehicle;3;60;true
+Cancelled;Cancelled;Appointment was cancelled;1;70;true

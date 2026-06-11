@@ -36,12 +36,13 @@ import cds.gen.repairservice.Stocks_;
 public class ItemPricingHandler implements EventHandler {
 
     private final PersistenceService db;
-    private final DraftService draftService;
+    private final PricingService pricingService;
 
     public ItemPricingHandler(PersistenceService db,
-                              @Qualifier(RepairService_.CDS_NAME) DraftService draftService) {
+                              @Qualifier(RepairService_.CDS_NAME) DraftService draftService,
+                              PricingService pricingService) {
         this.db = db;
-        this.draftService = draftService;
+        this.pricingService = pricingService;
     }
 
     @Before(event = { CqnService.EVENT_CREATE, CqnService.EVENT_UPDATE,
@@ -96,11 +97,9 @@ public class ItemPricingHandler implements EventHandler {
             var items = db.run(Select.from(AppointmentsItems_.class)
                             .where(i -> i.parent_ID().eq(appointmentId)))
                     .listOf(AppointmentsItems.class);
-            BigDecimal total = BigDecimal.ZERO;
             for (final AppointmentsItems item : items) {
                 String stockId = item.getStockItemId();
                 String serviceId = item.getServicesOfferedItemId();
-                AppointmentsItems effective = item;
                 if ((stockId != null || serviceId != null) && needsDerivation(item)) {
                     AppointmentsItems patch = AppointmentsItems.create();
                     if (stockId != null) {
@@ -117,10 +116,10 @@ public class ItemPricingHandler implements EventHandler {
                     db.run(Update.entity(AppointmentsItems_.class)
                             .data(patch)
                             .where(i -> i.parent_ID().eq(appointmentId).and(i.pos().eq(item.getPos()))));
-                    effective = mergeInto(item, patch);
+                    mergeInto(item, patch);
                 }
-                total = total.add(lineTotal(effective));
             }
+            BigDecimal total = pricingService.sumLines(items);
             db.run(Update.entity(Appointments_.class)
                     .data(Appointments.TOTAL_AMOUNT, total)
                     .where(a -> a.ID().eq(appointmentId)));
@@ -135,20 +134,6 @@ public class ItemPricingHandler implements EventHandler {
         if (patch.getDuration() != null) original.setDuration(patch.getDuration());
         if (patch.getCurrencyCode() != null) original.setCurrencyCode(patch.getCurrencyCode());
         return original;
-    }
-
-    static BigDecimal lineTotal(AppointmentsItems item) {
-        BigDecimal unitPrice = item.getUnitPrice();
-        if (unitPrice == null) {
-            return BigDecimal.ZERO;
-        }
-        BigDecimal factor = ItemType.WORK.equals(item.getType())
-                ? item.getDuration()
-                : item.getQuantity();
-        if (factor == null) {
-            return BigDecimal.ZERO;
-        }
-        return unitPrice.multiply(factor);
     }
 
     private static boolean needsDerivation(AppointmentsItems item) {

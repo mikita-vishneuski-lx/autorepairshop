@@ -19,6 +19,8 @@ cds:
   fiori:
     direct_crud: true
   security:
+    authentication:
+      authenticateUnknownEndpoints: false
     mock:
       users:
         - name: client1

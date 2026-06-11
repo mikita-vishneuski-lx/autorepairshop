@@ -8,7 +8,6 @@ import org.springframework.stereotype.Component;
 import com.sap.cds.ql.Select;
 import com.sap.cds.ql.cqn.CqnSelect;
 import com.sap.cds.services.cds.CqnService;
-import com.sap.cds.services.draft.DraftService;
 import com.sap.cds.services.handler.EventHandler;
 import com.sap.cds.services.handler.annotations.Before;
 import com.sap.cds.services.handler.annotations.On;
@@ -33,8 +32,7 @@ public class StockHandler implements EventHandler {
         this.db = db;
     }
 
-    @Before(event = { CqnService.EVENT_CREATE, CqnService.EVENT_UPDATE,
-                      DraftService.EVENT_DRAFT_NEW, DraftService.EVENT_DRAFT_PATCH },
+    @Before(event = { CqnService.EVENT_CREATE, CqnService.EVENT_UPDATE },
             entity = Stocks_.CDS_NAME)
     public void deriveTypeFromOriginal(List<Stocks> stocks) {
         if (stocks == null) {

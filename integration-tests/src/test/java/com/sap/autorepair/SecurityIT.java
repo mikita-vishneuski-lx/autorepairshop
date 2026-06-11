@@ -82,7 +82,7 @@ public class SecurityIT {
                 .content("{}"))
                 .andDo(print())
                 .andExpect(status().isOk())
-                .andExpect(jsonPath("$.itemStatus").value("Approved"));
+                .andExpect(jsonPath("$.itemStatus_code").value("Approved"));
     }
 
     @Test
@@ -216,7 +216,7 @@ public class SecurityIT {
     @Test
     @WithMockUser(username = "bob", roles = "Mechanic")
     public void mechanicCanReadStocks() throws Exception {
-        mockMvc.perform(get(STOCKS_URL + "?$filter=IsActiveEntity eq true"))
+        mockMvc.perform(get(STOCKS_URL))
                 .andDo(print())
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.value").isArray());
@@ -234,10 +234,11 @@ public class SecurityIT {
 
     @Test
     @WithMockUser(username = "bob", roles = "Mechanic")
-    public void mechanicCannotDraftEditStock() throws Exception {
-        mockMvc.perform(post(STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL + ",IsActiveEntity=true)/RepairService.draftEdit")
+    public void mechanicCannotPatchStock() throws Exception {
+        mockMvc.perform(patch(STOCKS_URL + "(" + STOCK_BRAKE_PAD_ORIGINAL + ")")
                 .header("If-Match", "*")
-                .contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("{ \"quantity\": 99.00 }"))
                 .andDo(print())
                 .andExpect(status().isForbidden());
     }
@@ -245,7 +246,7 @@ public class SecurityIT {
     @Test
     @WithMockUser(username = "alice", roles = "Manager")
     public void managerCanReadStocks() throws Exception {
-        mockMvc.perform(get(STOCKS_URL + "?$filter=IsActiveEntity eq true"))
+        mockMvc.perform(get(STOCKS_URL))
                 .andDo(print())
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.value").isArray());
@@ -253,16 +254,8 @@ public class SecurityIT {
 
     @Test
     @WithMockUser(username = "alice", roles = "Manager")
-    public void managerCanDraftEditAndPatchStock() throws Exception {
-        String editUrl  = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL + ",IsActiveEntity=true)/RepairService.draftEdit";
-        String draftUrl = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL + ",IsActiveEntity=false)";
-
-        mockMvc.perform(post(editUrl)
-                .header("If-Match", "*")
-                .contentType(MediaType.APPLICATION_JSON).content("{}"))
-               .andExpect(status().is2xxSuccessful());
-
-        mockMvc.perform(patch(draftUrl)
+    public void managerCanPatchStock() throws Exception {
+        mockMvc.perform(patch(STOCKS_URL + "(" + STOCK_BRAKE_PAD_ORIGINAL + ")")
                 .header("If-Match", "*")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{ \"quantity\": 99.00 }"))
@@ -274,7 +267,7 @@ public class SecurityIT {
     @WithMockUser(username = "alice", roles = "Manager")
     public void managerCannotDeleteStock() throws Exception {
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                .delete(STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL + ",IsActiveEntity=true)")
+                .delete(STOCKS_URL + "(" + STOCK_BRAKE_PAD_ORIGINAL + ")")
                 .header("If-Match", "*"))
                 .andDo(print())
                 .andExpect(status().isForbidden());
@@ -291,7 +284,7 @@ public class SecurityIT {
     @Test
     @WithMockUser(username = "bob", roles = "Mechanic")
     public void mechanicCanReadServicesOffered() throws Exception {
-        mockMvc.perform(get(SERVICES_URL + "?$filter=IsActiveEntity eq true"))
+        mockMvc.perform(get(SERVICES_URL))
                 .andDo(print())
                 .andExpect(status().isOk())
                 .andExpect(jsonPath("$.value").isArray());
@@ -309,16 +302,8 @@ public class SecurityIT {
 
     @Test
     @WithMockUser(username = "alice", roles = "Manager")
-    public void managerCanDraftEditAndPatchServiceOffered() throws Exception {
-        String editUrl  = SERVICES_URL + "(ID=" + SERVICE_STD_MAINT + ",IsActiveEntity=true)/RepairService.draftEdit";
-        String draftUrl = SERVICES_URL + "(ID=" + SERVICE_STD_MAINT + ",IsActiveEntity=false)";
-
-        mockMvc.perform(post(editUrl)
-                .header("If-Match", "*")
-                .contentType(MediaType.APPLICATION_JSON).content("{}"))
-               .andExpect(status().is2xxSuccessful());
-
-        mockMvc.perform(patch(draftUrl)
+    public void managerCanPatchServiceOffered() throws Exception {
+        mockMvc.perform(patch(SERVICES_URL + "(" + SERVICE_STD_MAINT + ")")
                 .header("If-Match", "*")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{ \"standardHour\": 75.00 }"))
@@ -330,7 +315,7 @@ public class SecurityIT {
     @WithMockUser(username = "alice", roles = "Manager")
     public void managerCannotDeleteServiceOffered() throws Exception {
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                .delete(SERVICES_URL + "(ID=" + SERVICE_STD_MAINT + ",IsActiveEntity=true)")
+                .delete(SERVICES_URL + "(" + SERVICE_STD_MAINT + ")")
                 .header("If-Match", "*"))
                 .andDo(print())
                 .andExpect(status().isForbidden());
