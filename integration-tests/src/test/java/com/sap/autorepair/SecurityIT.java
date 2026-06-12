@@ -235,10 +235,11 @@ public class SecurityIT {
     @Test
     @WithMockUser(username = "bob", roles = "Mechanic")
     public void mechanicCannotPatchStock() throws Exception {
-        mockMvc.perform(patch(STOCKS_URL + "(" + STOCK_BRAKE_PAD_ORIGINAL + ")")
+        String draftEditUrl = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL + ",IsActiveEntity=true)/RepairService.draftEdit";
+        mockMvc.perform(post(draftEditUrl)
                 .header("If-Match", "*")
                 .contentType(MediaType.APPLICATION_JSON)
-                .content("{ \"quantity\": 99.00 }"))
+                .content("{}"))
                 .andDo(print())
                 .andExpect(status().isForbidden());
     }
@@ -255,10 +256,21 @@ public class SecurityIT {
     @Test
     @WithMockUser(username = "alice", roles = "Manager")
     public void managerCanPatchStock() throws Exception {
-        mockMvc.perform(patch(STOCKS_URL + "(" + STOCK_BRAKE_PAD_ORIGINAL + ")")
+        String activeUrl    = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL + ",IsActiveEntity=true)";
+        String draftEditUrl = activeUrl + "/RepairService.draftEdit";
+        String draftUrl     = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL + ",IsActiveEntity=false)";
+        String activateUrl  = draftUrl + "/draftActivate";
+
+        mockMvc.perform(post(draftEditUrl).header("If-Match", "*").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(patch(draftUrl)
                 .header("If-Match", "*")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{ \"quantity\": 99.00 }"))
+                .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(post(activateUrl).header("If-Match", "*").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andDo(print())
                 .andExpect(status().is2xxSuccessful());
     }
@@ -267,7 +279,7 @@ public class SecurityIT {
     @WithMockUser(username = "alice", roles = "Manager")
     public void managerCannotDeleteStock() throws Exception {
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                .delete(STOCKS_URL + "(" + STOCK_BRAKE_PAD_ORIGINAL + ")")
+                .delete(STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL + ",IsActiveEntity=true)")
                 .header("If-Match", "*"))
                 .andDo(print())
                 .andExpect(status().isForbidden());
@@ -303,10 +315,21 @@ public class SecurityIT {
     @Test
     @WithMockUser(username = "alice", roles = "Manager")
     public void managerCanPatchServiceOffered() throws Exception {
-        mockMvc.perform(patch(SERVICES_URL + "(" + SERVICE_STD_MAINT + ")")
+        String activeUrl    = SERVICES_URL + "(ID=" + SERVICE_STD_MAINT + ",IsActiveEntity=true)";
+        String draftEditUrl = activeUrl + "/RepairService.draftEdit";
+        String draftUrl     = SERVICES_URL + "(ID=" + SERVICE_STD_MAINT + ",IsActiveEntity=false)";
+        String activateUrl  = draftUrl + "/draftActivate";
+
+        mockMvc.perform(post(draftEditUrl).header("If-Match", "*").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(patch(draftUrl)
                 .header("If-Match", "*")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("{ \"standardHour\": 75.00 }"))
+                .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(post(activateUrl).header("If-Match", "*").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andDo(print())
                 .andExpect(status().is2xxSuccessful());
     }
@@ -315,7 +338,7 @@ public class SecurityIT {
     @WithMockUser(username = "alice", roles = "Manager")
     public void managerCannotDeleteServiceOffered() throws Exception {
         mockMvc.perform(org.springframework.test.web.servlet.request.MockMvcRequestBuilders
-                .delete(SERVICES_URL + "(" + SERVICE_STD_MAINT + ")")
+                .delete(SERVICES_URL + "(ID=" + SERVICE_STD_MAINT + ",IsActiveEntity=true)")
                 .header("If-Match", "*"))
                 .andDo(print())
                 .andExpect(status().isForbidden());

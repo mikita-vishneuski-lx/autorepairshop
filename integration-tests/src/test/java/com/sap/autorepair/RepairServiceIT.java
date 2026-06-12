@@ -208,7 +208,7 @@ public class RepairServiceIT {
     @Test
     @WithMockUser(username = "bob", roles = "Mechanic")
     public void testGetAvailableSubstitutesFunction() throws Exception {
-              String functionUrl = "/odata/v4/RepairService/Stocks(" + STOCK_BRAKE_PAD_ORIGINAL_ID + ")/getAvailableSubstitutes()";
+              String functionUrl = "/odata/v4/RepairService/Stocks(ID=" + STOCK_BRAKE_PAD_ORIGINAL_ID + ",IsActiveEntity=true)/getAvailableSubstitutes()";
 
         mockMvc.perform(get(functionUrl).header("If-Match", "*"))
                .andDo(print())

@@ -35,9 +35,14 @@ public class ConcurrencyIT {
     @Test
     @WithMockUser(username = "alice", roles = "Manager")
     public void stockPatchWithStaleEtagReturns412() throws Exception {
-        String stockUrl = STOCKS_URL + "(" + STOCK_BRAKE_PAD_ORIGINAL_ID + ")";
+        String activeUrl = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL_ID + ",IsActiveEntity=true)";
+        String draftEditUrl = activeUrl + "/RepairService.draftEdit";
+        String draftUrl  = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL_ID + ",IsActiveEntity=false)";
 
-        MvcResult getRes = mockMvc.perform(get(stockUrl))
+        mockMvc.perform(post(draftEditUrl).header("If-Match", "*").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().is2xxSuccessful());
+
+        MvcResult getRes = mockMvc.perform(get(draftUrl))
                 .andExpect(status().isOk())
                 .andReturn();
         String realEtag = getRes.getResponse().getHeader("ETag");
@@ -45,7 +50,7 @@ public class ConcurrencyIT {
 
         String tampered = tamperEtag(realEtag);
 
-        mockMvc.perform(patch(stockUrl)
+        mockMvc.perform(patch(draftUrl)
                         .header("If-Match", tampered)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{ \"quantity\": 1.00 }"))
@@ -66,17 +71,26 @@ public class ConcurrencyIT {
     @Test
     @WithMockUser(username = "alice", roles = "Manager")
     public void stockPatchWithMatchingEtagSucceeds() throws Exception {
-        String stockUrl = STOCKS_URL + "(" + STOCK_BRAKE_PAD_ORIGINAL_ID + ")";
+        String activeUrl = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL_ID + ",IsActiveEntity=true)";
+        String draftEditUrl = activeUrl + "/RepairService.draftEdit";
+        String draftUrl  = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL_ID + ",IsActiveEntity=false)";
+        String activateUrl = draftUrl + "/draftActivate";
 
-        MvcResult getRes = mockMvc.perform(get(stockUrl))
+        mockMvc.perform(post(draftEditUrl).header("If-Match", "*").contentType(MediaType.APPLICATION_JSON).content("{}"))
+                .andExpect(status().is2xxSuccessful());
+
+        MvcResult getRes = mockMvc.perform(get(draftUrl))
                 .andExpect(status().isOk())
                 .andReturn();
         String etag = getRes.getResponse().getHeader("ETag");
 
-        mockMvc.perform(patch(stockUrl)
+        mockMvc.perform(patch(draftUrl)
                         .header("If-Match", etag)
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("{ \"quantity\": 7.00 }"))
+                .andExpect(status().is2xxSuccessful());
+
+        mockMvc.perform(post(activateUrl).header("If-Match", "*").contentType(MediaType.APPLICATION_JSON).content("{}"))
                 .andExpect(status().is2xxSuccessful());
     }
 
@@ -86,7 +100,7 @@ public class ConcurrencyIT {
         String editUrl       = APPTS_URL + "(ID=" + APPOINTMENT_INSPECTION_ID + ",IsActiveEntity=true)/RepairService.draftEdit";
         String addPartUrl    = APPTS_URL + "(ID=" + APPOINTMENT_INSPECTION_ID + ",IsActiveEntity=false)/RepairService.addPart";
         String activateUrl   = APPTS_URL + "(ID=" + APPOINTMENT_INSPECTION_ID + ",IsActiveEntity=false)/draftActivate";
-        String stockUrl      = STOCKS_URL + "(" + STOCK_BRAKE_PAD_ORIGINAL_ID + ")";
+        String stockUrl      = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL_ID + ",IsActiveEntity=true)";
 
         mockMvc.perform(get(stockUrl))
                 .andExpect(status().isOk())
@@ -114,7 +128,7 @@ public class ConcurrencyIT {
         String editUrl     = APPTS_URL + "(ID=" + APPOINTMENT_INSPECTION_ID + ",IsActiveEntity=true)/RepairService.draftEdit";
         String addPartUrl  = APPTS_URL + "(ID=" + APPOINTMENT_INSPECTION_ID + ",IsActiveEntity=false)/RepairService.addPart";
         String activateUrl = APPTS_URL + "(ID=" + APPOINTMENT_INSPECTION_ID + ",IsActiveEntity=false)/draftActivate";
-        String stockUrl    = STOCKS_URL + "(" + STOCK_BUDGET_ZERO_ID + ")";
+        String stockUrl    = STOCKS_URL + "(ID=" + STOCK_BUDGET_ZERO_ID + ",IsActiveEntity=true)";
 
         mockMvc.perform(get(stockUrl))
                 .andExpect(status().isOk())
@@ -143,7 +157,7 @@ public class ConcurrencyIT {
         String addPartUrl  = APPTS_URL + "(ID=" + APPOINTMENT_INSPECTION_ID + ",IsActiveEntity=false)/RepairService.addPart";
         String activateUrl = APPTS_URL + "(ID=" + APPOINTMENT_INSPECTION_ID + ",IsActiveEntity=false)/draftActivate";
         String edit2Url    = APPTS_URL + "(ID=" + APPOINTMENT_INSPECTION_ID + ",IsActiveEntity=true)/RepairService.draftEdit";
-        String stockUrl    = STOCKS_URL + "(" + STOCK_BRAKE_PAD_ORIGINAL_ID + ")";
+        String stockUrl    = STOCKS_URL + "(ID=" + STOCK_BRAKE_PAD_ORIGINAL_ID + ",IsActiveEntity=true)";
         String itemsUrl    = APPTS_URL + "(ID=" + APPOINTMENT_INSPECTION_ID + ",IsActiveEntity=false)/items";
 
         mockMvc.perform(get(stockUrl))

@@ -362,8 +362,9 @@ annotate RepairService.Stocks with {
                   @Measures.ISOCurrency: currency_code;
     currency      @title: 'Currency';
     original      @title: 'Original Part'
+                  @Common.ValueListWithFixedValues: true
                   @Common.ValueList: {
-                      CollectionPath: 'OriginalStocks',
+                      CollectionPath: 'Stocks',
                       Parameters    : [
                           { $Type            : 'Common.ValueListParameterInOut',
                             LocalDataProperty: original_ID,
@@ -373,7 +374,10 @@ annotate RepairService.Stocks with {
                           { $Type            : 'Common.ValueListParameterDisplayOnly',
                             ValueListProperty: 'name' },
                           { $Type            : 'Common.ValueListParameterDisplayOnly',
-                            ValueListProperty: 'brand' }
+                            ValueListProperty: 'brand' },
+                          { $Type            : 'Common.ValueListParameterConstant',
+                            ValueListProperty: 'type',
+                            Constant         : 'Original' }
                       ]
                   };
     createdAt     @title: 'Created';

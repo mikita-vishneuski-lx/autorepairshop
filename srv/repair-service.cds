@@ -121,24 +121,22 @@ service RepairService {
         { grant: 'getAvailableSubstitutes', to: 'Mechanic' },
         { grant: ['READ','CREATE','UPDATE'], to: 'Manager' }
     ])
-    @cds.redirection.target
-    entity Stocks          as projection on db.Stocks
+    @odata.draft.enabled
+    entity Stocks          as projection on db.Stocks {
+        *
+    }
         actions {
             function getAvailableSubstitutes() returns many Stocks;
         };
-
-    @readonly
-    @(restrict: [
-        { grant: 'READ', to: ['Mechanic','Manager'] }
-    ])
-    @cds.redirection.target: false
-    entity OriginalStocks  as projection on db.Stocks where type = 'Original';
 
     @(restrict: [
         { grant: 'READ', to: 'Mechanic' },
         { grant: ['READ','CREATE','UPDATE'], to: 'Manager' }
     ])
-    entity ServicesOffered as projection on db.OfferedServices;
+    @odata.draft.enabled
+    entity ServicesOffered as projection on db.OfferedServices {
+        *
+    };
 
     @readonly
     entity AppointmentStatuses as projection on db.AppointmentStatuses;
